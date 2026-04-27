@@ -6,7 +6,6 @@ import folium
 from streamlit_folium import st_folium
 import hashlib
 import io
-from collections import defaultdict
 
 # ============================================================
 # 頁面設定
@@ -31,6 +30,24 @@ if "upload_log" not in st.session_state:
 # ============================================================
 # 工具函式
 # ============================================================
+def safe_int(val):
+    """安全轉換為整數"""
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return 0
+
+def safe_sort_years(year_series):
+    """安全地取得排序後的學年度列表（統一為字串）"""
+    unique_vals = year_series.dropna().unique()
+    # 全部轉為字串
+    str_vals = [str(int(float(v))) if not isinstance(v, str) else v.strip() for v in unique_vals]
+    # 去重
+    str_vals = list(set(str_vals))
+    # 依數字排序
+    str_vals.sort(key=lambda x: safe_int(x))
+    return str_vals
+
 def compute_file_hash(file_bytes, filename):
     """用檔案內容 + 檔名產生唯一 hash"""
     content = filename.encode() + file_bytes
@@ -40,24 +57,40 @@ def clean_column_names(df):
     """清理並標準化欄位名稱"""
     col_mapping = {}
     for col in df.columns:
-        c = col.strip().replace(" ", "")
+        c = str(col).strip().replace(" ", "")
         if "學年" in c:
             col_mapping[col] = "學年度"
-        elif "科系" in c or "報考" in c or "系所" in c or "系別" in c:
+        elif any(k in c for k in ["科系", "報考", "系所", "系別"]):
             col_mapping[col] = "報考科系"
         elif "姓名" in c:
             col_mapping[col] = "姓名"
-        elif "畢業" in c or "來源" in c or "學校" in c or "高中" in c:
+        elif any(k in c for k in ["畢業", "來源", "學校", "高中"]):
             col_mapping[col] = "畢業學校"
-        elif "經緯" in c or "座標" in c or "坐標" in c:
+        elif any(k in c for k in ["經緯", "座標", "坐標"]):
             col_mapping[col] = "經緯度"
-        elif "身分證" in c or "身份證" in c or "ID" in c.upper():
+        elif any(k in c for k in ["身分證", "身份證"]) or "ID" in c.upper():
             col_mapping[col] = "身分證字號"
         elif "緯度" in c or "lat" in c.lower():
             col_mapping[col] = "緯度"
         elif "經度" in c or "lon" in c.lower() or "lng" in c.lower():
             col_mapping[col] = "經度"
     df = df.rename(columns=col_mapping)
+    return df
+
+def standardize_data(df):
+    """標準化資料型態"""
+    if "學年度" in df.columns:
+        df["學年度"] = df["學年度"].apply(
+            lambda x: str(int(float(x))) if pd.notna(x) else None
+        )
+    if "報考科系" in df.columns:
+        df["報考科系"] = df["報考科系"].astype(str).str.strip()
+    if "畢業學校" in df.columns:
+        df["畢業學校"] = df["畢業學校"].astype(str).str.strip()
+    if "姓名" in df.columns:
+        df["姓名"] = df["姓名"].astype(str).str.strip()
+    if "身分證字號" in df.columns:
+        df["身分證字號"] = df["身分證字號"].astype(str).str.strip()
     return df
 
 def parse_coordinates(df):
@@ -74,27 +107,29 @@ def parse_coordinates(df):
     for val in df["經緯度"]:
         try:
             val_str = str(val).strip()
-            # 格式: "25.033, 121.565" 或 "(25.033, 121.565)"
-            val_str = val_str.replace("(", "").replace(")", "")
+            if val_str in ("", "nan", "None", "NaN"):
+                lats.append(None)
+                lons.append(None)
+                continue
+            val_str = val_str.replace("(", "").replace(")", "").replace("（", "").replace("）", "")
             parts = val_str.replace("，", ",").split(",")
             if len(parts) == 2:
-                lat = float(parts[0].strip())
-                lon = float(parts[1].strip())
-                # 台灣緯度約 21.9~25.3, 經度約 120~122
-                if 21 < lat < 26 and 119 < lon < 123:
-                    lats.append(lat)
-                    lons.append(lon)
-                elif 21 < lon < 26 and 119 < lat < 123:
-                    # 經緯度反了
-                    lats.append(lon)
-                    lons.append(lat)
+                a = float(parts[0].strip())
+                b = float(parts[1].strip())
+                # 台灣緯度約 21.9~25.3, 經度約 119~122.1
+                if 21 < a < 26 and 119 < b < 123:
+                    lats.append(a)
+                    lons.append(b)
+                elif 21 < b < 26 and 119 < a < 123:
+                    lats.append(b)
+                    lons.append(a)
                 else:
                     lats.append(None)
                     lons.append(None)
             else:
                 lats.append(None)
                 lons.append(None)
-        except:
+        except Exception:
             lats.append(None)
             lons.append(None)
 
@@ -106,11 +141,12 @@ def merge_data(existing_df, new_df):
     """合併資料，以身分證字號 + 學年度為唯一鍵"""
     if existing_df.empty:
         return new_df
+    if new_df.empty:
+        return existing_df
     combined = pd.concat([existing_df, new_df], ignore_index=True)
     if "身分證字號" in combined.columns and "學年度" in combined.columns:
         combined = combined.drop_duplicates(
-            subset=["身分證字號", "學年度"],
-            keep="last"
+            subset=["身分證字號", "學年度"], keep="last"
         )
     else:
         combined = combined.drop_duplicates(keep="last")
@@ -149,7 +185,6 @@ def generate_sample_data():
     names = "雅婷志明家豪淑芬建宏美玲俊傑怡君宗翰佩珊"
 
     records = []
-    id_counter = 0
     for year in [112, 113, 114]:
         n = random.randint(180, 250)
         for _ in range(n):
@@ -158,10 +193,9 @@ def generate_sample_data():
             name = random.choice(surnames) + random.choice(names) + random.choice(names)
             lat = base_lat + random.uniform(-0.02, 0.02)
             lon = base_lon + random.uniform(-0.02, 0.02)
-            id_counter += 1
             fake_id = f"A{random.randint(100000000, 299999999)}"
             records.append({
-                "學年度": year,
+                "學年度": str(year),
                 "報考科系": dept,
                 "姓名": name,
                 "畢業學校": school_name,
@@ -175,8 +209,9 @@ def generate_sample_data():
 # 側邊欄 - 資料管理
 # ============================================================
 with st.sidebar:
-    st.image("https://via.placeholder.com/280x60/E8792F/FFFFFF?text=HWU+招生分析系統", use_container_width=True)
-    st.markdown("## 📁 資料匯入")
+    st.markdown("## 🎓 HWU 招生分析系統")
+    st.markdown("---")
+    st.markdown("### 📁 資料匯入")
 
     uploaded_files = st.file_uploader(
         "上傳 Excel 檔案（可多檔）",
@@ -195,6 +230,7 @@ with st.sidebar:
                 try:
                     new_df = pd.read_excel(uf)
                     new_df = clean_column_names(new_df)
+                    new_df = standardize_data(new_df)
                     new_df = parse_coordinates(new_df)
                     row_count = len(new_df)
 
@@ -204,8 +240,8 @@ with st.sidebar:
 
                     year_info = ""
                     if "學年度" in new_df.columns:
-                        years = new_df["學年度"].dropna().unique()
-                        year_info = f"（{', '.join(map(str, sorted(years)))}）"
+                        years = safe_sort_years(new_df["學年度"])
+                        year_info = f"（{', '.join(years)}）"
 
                     st.session_state.uploaded_hashes[fhash] = uf.name
                     st.session_state.upload_log.append(
@@ -239,14 +275,14 @@ with st.sidebar:
     if not data.empty:
         st.success(f"📊 目前共 **{len(data):,}** 筆資料")
         if "學年度" in data.columns:
-            years = sorted(data["學年度"].dropna().unique())
-            st.info(f"📅 涵蓋學年度：{', '.join(map(str, years))}")
+            years = safe_sort_years(data["學年度"])
+            st.info(f"📅 學年度：{', '.join(years)}")
         if "報考科系" in data.columns:
             st.info(f"🏫 科系數：{data['報考科系'].nunique()}")
     else:
         st.warning("尚未匯入資料")
 
-    # 清除按鈕
+    # 清除
     st.markdown("---")
     if st.button("🗑️ 清除所有資料", use_container_width=True, type="secondary"):
         st.session_state.main_data = pd.DataFrame()
@@ -293,14 +329,15 @@ with tab1:
     col_f1, col_f2 = st.columns(2)
     with col_f1:
         if "學年度" in data.columns:
-            years = ["全部"] + sorted(data["學年度"].dropna().unique().tolist())
-            sel_year_map = st.selectbox("選擇學年度", years, key="map_year")
+            year_options = ["全部"] + safe_sort_years(data["學年度"])
+            sel_year_map = st.selectbox("選擇學年度", year_options, key="map_year")
         else:
             sel_year_map = "全部"
     with col_f2:
         if "報考科系" in data.columns:
-            depts = ["全部"] + sorted(data["報考科系"].dropna().unique().tolist())
-            sel_dept_map = st.selectbox("選擇科系", depts, key="map_dept")
+            dept_list = sorted(data["報考科系"].dropna().unique().tolist())
+            dept_options = ["全部"] + dept_list
+            sel_dept_map = st.selectbox("選擇科系", dept_options, key="map_dept")
         else:
             sel_dept_map = "全部"
 
@@ -310,14 +347,18 @@ with tab1:
     if sel_dept_map != "全部" and "報考科系" in map_data.columns:
         map_data = map_data[map_data["報考科系"] == sel_dept_map]
 
-    if "緯度" in map_data.columns and "經度" in map_data.columns:
-        valid_coords = map_data.dropna(subset=["緯度", "經度"])
+    has_coords = "緯度" in map_data.columns and "經度" in map_data.columns
+
+    if has_coords:
+        valid_coords = map_data.dropna(subset=["緯度", "經度"]).copy()
+        valid_coords["緯度"] = pd.to_numeric(valid_coords["緯度"], errors="coerce")
+        valid_coords["經度"] = pd.to_numeric(valid_coords["經度"], errors="coerce")
+        valid_coords = valid_coords.dropna(subset=["緯度", "經度"])
 
         if len(valid_coords) > 0:
             col_m1, col_m2 = st.columns([3, 1])
 
             with col_m1:
-                # 中華醫事科大位置
                 hwu_lat, hwu_lon = 22.9908, 120.2133
                 m = folium.Map(
                     location=[23.5, 120.5],
@@ -325,31 +366,36 @@ with tab1:
                     tiles="CartoDB positron"
                 )
 
-                # 學校標記
                 folium.Marker(
                     location=[hwu_lat, hwu_lon],
                     popup="中華醫事科技大學",
                     icon=folium.Icon(color="red", icon="star", prefix="fa"),
                 ).add_to(m)
 
-                # 考生標記（使用 MarkerCluster 的概念，但用 CircleMarker）
-                for _, row in valid_coords.iterrows():
-                    popup_text = ""
-                    if "畢業學校" in row.index:
-                        popup_text += f"學校：{row['畢業學校']}<br>"
-                    if "報考科系" in row.index:
-                        popup_text += f"科系：{row['報考科系']}<br>"
-                    if "學年度" in row.index:
-                        popup_text += f"學年：{row['學年度']}"
+                # 限制標記數量避免效能問題
+                display_coords = valid_coords
+                if len(valid_coords) > 1000:
+                    display_coords = valid_coords.sample(1000, random_state=42)
+                    st.caption(f"⚡ 地圖顯示抽樣 1,000 筆（共 {len(valid_coords):,} 筆）")
+
+                for _, row in display_coords.iterrows():
+                    popup_parts = []
+                    if "畢業學校" in row.index and pd.notna(row.get("畢業學校")):
+                        popup_parts.append(f"學校：{row['畢業學校']}")
+                    if "報考科系" in row.index and pd.notna(row.get("報考科系")):
+                        popup_parts.append(f"科系：{row['報考科系']}")
+                    if "學年度" in row.index and pd.notna(row.get("學年度")):
+                        popup_parts.append(f"學年：{row['學年度']}")
+                    popup_text = "<br>".join(popup_parts)
 
                     folium.CircleMarker(
-                        location=[row["緯度"], row["經度"]],
+                        location=[float(row["緯度"]), float(row["經度"])],
                         radius=5,
                         color="#E8792F",
                         fill=True,
                         fill_color="#E8792F",
                         fill_opacity=0.6,
-                        popup=folium.Popup(popup_text, max_width=200),
+                        popup=folium.Popup(popup_text, max_width=200) if popup_text else None,
                     ).add_to(m)
 
                 st_folium(m, width=None, height=550, use_container_width=True)
@@ -357,10 +403,11 @@ with tab1:
             with col_m2:
                 st.metric("篩選結果", f"{len(map_data):,} 人")
                 st.metric("有座標資料", f"{len(valid_coords):,} 人")
-                st.metric("座標涵蓋率", f"{len(valid_coords)/len(map_data)*100:.1f}%")
+                coverage = len(valid_coords) / len(map_data) * 100 if len(map_data) > 0 else 0
+                st.metric("座標涵蓋率", f"{coverage:.1f}%")
 
                 if "畢業學校" in valid_coords.columns:
-                    st.markdown("**📍 主要來源地區**")
+                    st.markdown("**📍 主要來源學校**")
                     school_counts = valid_coords["畢業學校"].value_counts().head(8)
                     for school, cnt in school_counts.items():
                         st.caption(f"• {school}：{cnt} 人")
@@ -378,10 +425,9 @@ with tab2:
     if "報考科系" not in data.columns:
         st.warning("資料中未包含「報考科系」欄位")
     else:
-        # 篩選
         if "學年度" in data.columns:
-            years_t2 = ["全部"] + sorted(data["學年度"].dropna().unique().tolist())
-            sel_year_t2 = st.selectbox("選擇學年度", years_t2, key="t2_year")
+            year_opts_t2 = ["全部"] + safe_sort_years(data["學年度"])
+            sel_year_t2 = st.selectbox("選擇學年度", year_opts_t2, key="t2_year")
         else:
             sel_year_t2 = "全部"
 
@@ -406,7 +452,7 @@ with tab2:
             )
             fig_bar.update_layout(
                 yaxis={"categoryorder": "total ascending"},
-                height=450,
+                height=max(400, len(dept_counts) * 35),
                 showlegend=False,
             )
             st.plotly_chart(fig_bar, use_container_width=True)
@@ -419,13 +465,17 @@ with tab2:
                 title="科系佔比分布",
                 color_discrete_sequence=px.colors.sequential.Oranges_r,
             )
-            fig_pie.update_layout(height=450)
+            fig_pie.update_layout(height=max(400, len(dept_counts) * 35))
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        # 跨年度科系比較（如有多學年）
+        # 跨年度科系趨勢
         if "學年度" in data.columns and data["學年度"].nunique() > 1 and sel_year_t2 == "全部":
             st.subheader("📈 各科系歷年報考趨勢")
             yearly_dept = data.groupby(["學年度", "報考科系"]).size().reset_index(name="人數")
+            # 確保學年度排序正確
+            yearly_dept["排序鍵"] = yearly_dept["學年度"].apply(safe_int)
+            yearly_dept = yearly_dept.sort_values("排序鍵")
+
             fig_line = px.line(
                 yearly_dept,
                 x="學年度",
@@ -437,7 +487,7 @@ with tab2:
             fig_line.update_layout(height=450)
             st.plotly_chart(fig_line, use_container_width=True)
 
-        # KPI 卡片
+        # KPI
         st.subheader("📋 科系報考統計摘要")
         kpi_cols = st.columns(4)
         with kpi_cols[0]:
@@ -463,8 +513,8 @@ with tab3:
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             if "學年度" in data.columns:
-                years_t3 = ["全部"] + sorted(data["學年度"].dropna().unique().tolist())
-                sel_year_t3 = st.selectbox("選擇學年度", years_t3, key="t3_year")
+                year_opts_t3 = ["全部"] + safe_sort_years(data["學年度"])
+                sel_year_t3 = st.selectbox("選擇學年度", year_opts_t3, key="t3_year")
             else:
                 sel_year_t3 = "全部"
         with col_f2:
@@ -477,7 +527,6 @@ with tab3:
         school_counts = t3_data["畢業學校"].value_counts().head(top_n).reset_index()
         school_counts.columns = ["畢業學校", "報考人數"]
 
-        # 長條圖
         fig_school = px.bar(
             school_counts,
             x="報考人數",
@@ -494,23 +543,24 @@ with tab3:
         )
         st.plotly_chart(fig_school, use_container_width=True)
 
-        # 來源學校 × 科系 交叉分析
+        # 交叉分析
         if "報考科系" in t3_data.columns:
             st.subheader("🔀 來源學校 × 科系 交叉分析")
             top_schools = school_counts["畢業學校"].tolist()
             cross_data = t3_data[t3_data["畢業學校"].isin(top_schools)]
-            cross_table = pd.crosstab(cross_data["畢業學校"], cross_data["報考科系"])
 
-            fig_heat = px.imshow(
-                cross_table,
-                title="來源學校 vs 報考科系（人數）",
-                color_continuous_scale="Oranges",
-                aspect="auto",
-            )
-            fig_heat.update_layout(height=max(400, top_n * 28))
-            st.plotly_chart(fig_heat, use_container_width=True)
+            if len(cross_data) > 0:
+                cross_table = pd.crosstab(cross_data["畢業學校"], cross_data["報考科系"])
+                fig_heat = px.imshow(
+                    cross_table,
+                    title="來源學校 vs 報考科系（人數）",
+                    color_continuous_scale="Oranges",
+                    aspect="auto",
+                )
+                fig_heat.update_layout(height=max(400, top_n * 28))
+                st.plotly_chart(fig_heat, use_container_width=True)
 
-        # 學校管理建議
+        # 管理建議
         st.subheader("⭐ 來源學校管理建議")
         all_school_counts = t3_data["畢業學校"].value_counts()
         total = len(t3_data)
@@ -519,8 +569,8 @@ with tab3:
         cumulative = 0
         for school, cnt in all_school_counts.items():
             cumulative += cnt
-            ratio = cnt / total * 100
-            cum_ratio = cumulative / total * 100
+            ratio = cnt / total * 100 if total > 0 else 0
+            cum_ratio = cumulative / total * 100 if total > 0 else 0
             if cum_ratio <= 50:
                 level = "⭐⭐⭐ 重點經營"
             elif cum_ratio <= 80:
@@ -536,11 +586,7 @@ with tab3:
             })
 
         rec_df = pd.DataFrame(recs)
-        st.dataframe(
-            rec_df.head(top_n),
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.dataframe(rec_df.head(top_n), use_container_width=True, hide_index=True)
 
 # ============================================================
 # TAB 4: 跨年度比較
@@ -548,14 +594,20 @@ with tab3:
 with tab4:
     st.header("📈 跨年度比較分析")
 
-    if "學年度" not in data.columns or data["學年度"].nunique() < 2:
-        st.info("💡 需要至少兩個學年度的資料才能進行跨年比較。目前僅有一個學年度。")
-    else:
-        years_sorted = sorted(data["學年度"].dropna().unique())
+    has_multi_years = (
+        "學年度" in data.columns and data["學年度"].nunique() > 1
+    )
 
-        # 總報考人數趨勢
+    if not has_multi_years:
+        st.info("💡 需要至少兩個學年度的資料才能進行跨年比較。")
+    else:
+        years_sorted = safe_sort_years(data["學年度"])
+
+        # 總人數趨勢
         st.subheader("📊 總報考人數趨勢")
         yearly_total = data.groupby("學年度").size().reset_index(name="報考人數")
+        yearly_total["排序鍵"] = yearly_total["學年度"].apply(safe_int)
+        yearly_total = yearly_total.sort_values("排序鍵").drop(columns=["排序鍵"])
 
         col_t1, col_t2 = st.columns([2, 1])
         with col_t1:
@@ -576,74 +628,78 @@ with tab4:
             for i in range(1, len(yearly_total)):
                 prev = yearly_total.iloc[i - 1]
                 curr = yearly_total.iloc[i]
-                diff = curr["報考人數"] - prev["報考人數"]
-                pct = diff / prev["報考人數"] * 100 if prev["報考人數"] > 0 else 0
-                emoji = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                diff = int(curr["報考人數"]) - int(prev["報考人數"])
+                pct = diff / int(prev["報考人數"]) * 100 if int(prev["報考人數"]) > 0 else 0
                 st.metric(
-                    f"{int(curr['學年度'])} 學年度",
+                    f"{curr['學年度']} 學年度",
                     f"{int(curr['報考人數']):,} 人",
                     f"{diff:+d} 人（{pct:+.1f}%）"
                 )
 
-        # 科系增減
+        # 科系增減比較
         if "報考科系" in data.columns and len(years_sorted) >= 2:
             st.subheader("📊 科系增減比較")
             col_y1, col_y2 = st.columns(2)
             with col_y1:
                 year_a = st.selectbox("基準年", years_sorted[:-1], key="cmp_ya")
             with col_y2:
-                later_years = [y for y in years_sorted if y > year_a]
-                year_b = st.selectbox("比較年", later_years, key="cmp_yb")
+                later_years = [y for y in years_sorted if safe_int(y) > safe_int(year_a)]
+                if later_years:
+                    year_b = st.selectbox("比較年", later_years, key="cmp_yb")
+                else:
+                    year_b = None
 
-            da = data[data["學年度"] == year_a]["報考科系"].value_counts()
-            db = data[data["學年度"] == year_b]["報考科系"].value_counts()
+            if year_b:
+                da = data[data["學年度"] == year_a]["報考科系"].value_counts()
+                db = data[data["學年度"] == year_b]["報考科系"].value_counts()
 
-            all_depts = sorted(set(da.index) | set(db.index))
-            comparison = []
-            for dept in all_depts:
-                a_val = da.get(dept, 0)
-                b_val = db.get(dept, 0)
-                diff = b_val - a_val
-                pct = (diff / a_val * 100) if a_val > 0 else (100 if b_val > 0 else 0)
-                comparison.append({
-                    "科系": dept,
-                    f"{int(year_a)}學年": a_val,
-                    f"{int(year_b)}學年": b_val,
-                    "增減": diff,
-                    "增減率(%)": round(pct, 1),
-                })
+                all_depts = sorted(set(da.index) | set(db.index))
+                comparison = []
+                for dept in all_depts:
+                    a_val = int(da.get(dept, 0))
+                    b_val = int(db.get(dept, 0))
+                    diff = b_val - a_val
+                    pct = (diff / a_val * 100) if a_val > 0 else (100.0 if b_val > 0 else 0.0)
+                    comparison.append({
+                        "科系": dept,
+                        f"{year_a}學年": a_val,
+                        f"{year_b}學年": b_val,
+                        "增減": diff,
+                        "增減率(%)": round(pct, 1),
+                    })
 
-            cmp_df = pd.DataFrame(comparison).sort_values("增減", ascending=False)
+                cmp_df = pd.DataFrame(comparison).sort_values("增減", ascending=False)
 
-            fig_cmp = go.Figure()
-            fig_cmp.add_trace(go.Bar(
-                name=f"{int(year_a)}學年",
-                x=cmp_df["科系"],
-                y=cmp_df[f"{int(year_a)}學年"],
-                marker_color="#FDD7B4"
-            ))
-            fig_cmp.add_trace(go.Bar(
-                name=f"{int(year_b)}學年",
-                x=cmp_df["科系"],
-                y=cmp_df[f"{int(year_b)}學年"],
-                marker_color="#E8792F"
-            ))
-            fig_cmp.update_layout(
-                barmode="group",
-                title=f"科系人數比較：{int(year_a)} vs {int(year_b)}",
-                height=450,
-            )
-            st.plotly_chart(fig_cmp, use_container_width=True)
+                fig_cmp = go.Figure()
+                fig_cmp.add_trace(go.Bar(
+                    name=f"{year_a}學年",
+                    x=cmp_df["科系"],
+                    y=cmp_df[f"{year_a}學年"],
+                    marker_color="#FDD7B4"
+                ))
+                fig_cmp.add_trace(go.Bar(
+                    name=f"{year_b}學年",
+                    x=cmp_df["科系"],
+                    y=cmp_df[f"{year_b}學年"],
+                    marker_color="#E8792F"
+                ))
+                fig_cmp.update_layout(
+                    barmode="group",
+                    title=f"科系人數比較：{year_a} vs {year_b}",
+                    height=450,
+                )
+                st.plotly_chart(fig_cmp, use_container_width=True)
+                st.dataframe(cmp_df, use_container_width=True, hide_index=True)
 
-            st.dataframe(cmp_df, use_container_width=True, hide_index=True)
-
-        # 來源學校變化
+        # 來源學校趨勢
         if "畢業學校" in data.columns and len(years_sorted) >= 2:
             st.subheader("🏫 來源學校年度變化")
-
             school_year = data.groupby(["學年度", "畢業學校"]).size().reset_index(name="人數")
             top_schools_overall = data["畢業學校"].value_counts().head(10).index.tolist()
             school_year_top = school_year[school_year["畢業學校"].isin(top_schools_overall)]
+            school_year_top = school_year_top.copy()
+            school_year_top["排序鍵"] = school_year_top["學年度"].apply(safe_int)
+            school_year_top = school_year_top.sort_values("排序鍵")
 
             fig_school_trend = px.line(
                 school_year_top,
@@ -662,21 +718,20 @@ with tab4:
 with tab5:
     st.header("🔍 資料檢視與匯出")
 
-    # 篩選
     col_e1, col_e2, col_e3 = st.columns(3)
     export_data = data.copy()
 
     with col_e1:
         if "學年度" in data.columns:
-            yr_options = ["全部"] + sorted(data["學年度"].dropna().unique().tolist())
+            yr_options = ["全部"] + safe_sort_years(data["學年度"])
             sel_yr_exp = st.selectbox("學年度", yr_options, key="exp_yr")
             if sel_yr_exp != "全部":
                 export_data = export_data[export_data["學年度"] == sel_yr_exp]
 
     with col_e2:
         if "報考科系" in data.columns:
-            dept_options = ["全部"] + sorted(data["報考科系"].dropna().unique().tolist())
-            sel_dept_exp = st.selectbox("科系", dept_options, key="exp_dept")
+            dept_opts = ["全部"] + sorted(data["報考科系"].dropna().unique().tolist())
+            sel_dept_exp = st.selectbox("科系", dept_opts, key="exp_dept")
             if sel_dept_exp != "全部":
                 export_data = export_data[export_data["報考科系"] == sel_dept_exp]
 
@@ -690,10 +745,10 @@ with tab5:
 
     st.caption(f"篩選結果：{len(export_data):,} 筆")
 
-    # 顯示欄位（隱藏身分證字號）
-    display_cols = [c for c in export_data.columns if c != "身分證字號"]
+    # 隱藏身分證字號
+    display_cols = [c for c in export_data.columns if c not in ("身分證字號",)]
     st.dataframe(
-        export_data[display_cols],
+        export_data[display_cols] if display_cols else export_data,
         use_container_width=True,
         hide_index=True,
         height=400,
@@ -726,17 +781,17 @@ with tab5:
             use_container_width=True,
         )
 
-    # 資料品質報告
+    # 資料品質
     st.subheader("📋 資料品質報告")
     quality = []
     for col in data.columns:
         non_null = data[col].notna().sum()
-        total = len(data)
+        total_rows = len(data)
         quality.append({
             "欄位": col,
             "非空筆數": non_null,
-            "總筆數": total,
-            "完整率": f"{non_null/total*100:.1f}%",
-            "空值數": total - non_null,
+            "總筆數": total_rows,
+            "完整率": f"{non_null / total_rows * 100:.1f}%" if total_rows > 0 else "0%",
+            "空值數": total_rows - non_null,
         })
     st.dataframe(pd.DataFrame(quality), use_container_width=True, hide_index=True)
