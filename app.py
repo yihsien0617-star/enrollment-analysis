@@ -61,7 +61,6 @@ def compute_file_hash(file_bytes, filename):
     return hashlib.md5(filename.encode() + file_bytes).hexdigest()
 
 def deduplicate_columns(df):
-    """處理重複欄位名稱：重複的欄位加上 _2, _3 等後綴"""
     cols = list(df.columns)
     seen = {}
     new_cols = []
@@ -77,13 +76,11 @@ def deduplicate_columns(df):
     return df
 
 def clean_column_names(df, phase="phase1"):
-    # 先處理重複欄位
     df = deduplicate_columns(df)
-
     col_mapping = {}
     for col in df.columns:
         c = str(col).strip().replace(" ", "")
-        if "學年" in c and col not in col_mapping.values():
+        if "學年" in c and "學年度" not in col_mapping.values():
             col_mapping[col] = "學年度"
         elif any(k in c for k in ["科系", "報考", "系所", "系別", "錄取科系"]) and "學年" not in c:
             if "報考科系" not in col_mapping.values():
@@ -108,47 +105,39 @@ def clean_column_names(df, phase="phase1"):
             if "經度" not in col_mapping.values():
                 col_mapping[col] = "經度"
         elif any(k in c for k in ["面試", "甄試", "筆試", "成績", "分數", "總分"]):
-            pass  # 保留原始欄位名
+            pass
         elif any(k in c for k in ["錄取", "報到", "入學", "狀態"]):
             if "入學狀態" not in col_mapping.values():
                 col_mapping[col] = "入學狀態"
     df = df.rename(columns=col_mapping)
-
-    # 再次移除重命名後可能出現的重複
     df = deduplicate_columns(df)
     return df
 
+def safe_get_series(df, col_name):
+    col_data = df[col_name]
+    if isinstance(col_data, pd.DataFrame):
+        col_data = col_data.iloc[:, 0]
+    return col_data
+
 def standardize_data(df):
+    df = df.copy()
     if "學年度" in df.columns:
-        # 確保是 Series
-        col_data = df["學年度"]
-        if isinstance(col_data, pd.DataFrame):
-            col_data = col_data.iloc[:, 0]
-        df = df.copy()
+        col_data = safe_get_series(df, "學年度")
         df["學年度"] = col_data.apply(
             lambda x: str(int(float(x))) if pd.notna(x) else None
         )
-
     for col_name in ["報考科系", "畢業學校", "姓名", "身分證字號"]:
         if col_name in df.columns:
-            col_data = df[col_name]
-            # 如果同名欄位多於一個，取第一個
-            if isinstance(col_data, pd.DataFrame):
-                col_data = col_data.iloc[:, 0]
-            df = df.copy()
+            col_data = safe_get_series(df, col_name)
             df[col_name] = col_data.astype(str).str.strip()
             df[col_name] = df[col_name].replace({"nan": None, "None": None, "": None})
     return df
 
 def parse_coordinates(df):
+    df = df.copy()
     if "緯度" in df.columns and "經度" in df.columns:
-        lat_col = df["緯度"]
-        lon_col = df["經度"]
-        if isinstance(lat_col, pd.DataFrame):
-            lat_col = lat_col.iloc[:, 0]
-        if isinstance(lon_col, pd.DataFrame):
-            lon_col = lon_col.iloc[:, 0]
-        df = df.copy()
+        lat_col = safe_get_series(df, "緯度")
+        lon_col = safe_get_series(df, "經度")
         df["緯度"] = pd.to_numeric(lat_col, errors="coerce")
         df["經度"] = pd.to_numeric(lon_col, errors="coerce")
         return df
@@ -156,10 +145,7 @@ def parse_coordinates(df):
     if "經緯度" not in df.columns:
         return df
 
-    coord_col = df["經緯度"]
-    if isinstance(coord_col, pd.DataFrame):
-        coord_col = coord_col.iloc[:, 0]
-
+    coord_col = safe_get_series(df, "經緯度")
     lats, lons = [], []
     for val in coord_col:
         try:
@@ -189,8 +175,6 @@ def parse_coordinates(df):
         except Exception:
             lats.append(None)
             lons.append(None)
-
-    df = df.copy()
     df["緯度"] = lats
     df["經度"] = lons
     return df
@@ -264,67 +248,6 @@ def merge_all_phases():
 
     st.session_state.merged_data = p1.reset_index(drop=True)
 
-def generate_sample_data():
-    import random
-    random.seed(42)
-    schools = [
-        ("台南市私立長榮高中", 22.983, 120.215),
-        ("台南市立台南一中", 22.993, 120.205),
-        ("高雄市立高雄女中", 22.627, 120.305),
-        ("高雄市私立義大高中", 22.652, 120.350),
-        ("台南市立南寧高中", 22.955, 120.190),
-        ("嘉義市立嘉義高中", 23.480, 120.440),
-        ("屏東縣立屏東高中", 22.669, 120.488),
-        ("台中市立台中一中", 24.148, 120.680),
-        ("台南市私立光華高中", 22.978, 120.212),
-        ("台南市立永仁高中", 23.025, 120.230),
-    ]
-    departments = [
-        "護理系", "醫學檢驗暨生物技術系", "職業安全衛生系",
-        "食品營養系", "幼兒保育系", "長期照護系",
-        "視光系", "藥學系", "運動健康與休閒系"
-    ]
-    surnames = "陳林黃張李王吳劉蔡楊許鄭謝洪曾邱"
-    given_names = "雅婷志明家豪淑芬建宏美玲俊傑怡君宗翰佩珊書豪"
-    all_phase1 = []
-    all_phase2 = []
-    all_final = []
-    for year in [112, 113, 114]:
-        n1 = random.randint(200, 300)
-        year_names = []
-        for _ in range(n1):
-            school_name, base_lat, base_lon = random.choice(schools)
-            dept = random.choice(departments)
-            name = random.choice(surnames) + random.choice(given_names) + random.choice(given_names)
-            lat = base_lat + random.uniform(-0.02, 0.02)
-            lon = base_lon + random.uniform(-0.02, 0.02)
-            fake_id = "{}{}".format(
-                "ABCDEFGHIJ"[random.randint(0, 9)],
-                random.randint(100000000, 299999999)
-            )
-            year_names.append(name)
-            all_phase1.append({
-                "學年度": str(year), "報考科系": dept, "姓名": name,
-                "畢業學校": school_name,
-                "經緯度": "{:.4f}, {:.4f}".format(lat, lon),
-                "身分證字號": fake_id
-            })
-        n2 = int(n1 * 0.6)
-        phase2_names = random.sample(year_names, n2)
-        for name in phase2_names:
-            all_phase2.append({
-                "學年度": str(year), "姓名": name,
-                "面試成績": random.randint(50, 100),
-                "筆試成績": random.randint(40, 100),
-            })
-        nf = int(n1 * 0.4)
-        final_names = random.sample(phase2_names, min(nf, len(phase2_names)))
-        for name in final_names:
-            all_final.append({
-                "學年度": str(year), "姓名": name,
-            })
-    return pd.DataFrame(all_phase1), pd.DataFrame(all_phase2), pd.DataFrame(all_final)
-
 # ============================================================
 # 側邊欄
 # ============================================================
@@ -374,10 +297,7 @@ with st.sidebar:
                 continue
             try:
                 new_df = pd.read_excel(uf)
-
-                # 偵錯：記錄原始欄位名稱
                 original_cols = list(new_df.columns)
-
                 new_df = clean_column_names(new_df, phase=phase_key)
                 new_df = standardize_data(new_df)
                 if phase_key == "phase1":
@@ -395,7 +315,6 @@ with st.sidebar:
                 if existing.empty:
                     st.session_state["{}_data".format(phase_key)] = new_df
                 else:
-                    # 對齊欄位後合併
                     combined = pd.concat([existing, new_df], ignore_index=True, sort=False)
                     combined = combined.drop_duplicates(keep="last")
                     st.session_state["{}_data".format(phase_key)] = combined
@@ -421,18 +340,8 @@ with st.sidebar:
 
     merge_all_phases()
 
-    st.markdown("---")
-    if st.button("📊 載入三階段示範資料", use_container_width=True):
-        s1, s2, s3 = generate_sample_data()
-        s1 = parse_coordinates(s1)
-        st.session_state.phase1_data = s1
-        st.session_state.phase2_data = s2
-        st.session_state.final_data = s3
-        merge_all_phases()
-        st.session_state.upload_log.append("✅ 三階段示範資料已載入")
-        st.rerun()
-
     if st.session_state.upload_log:
+        st.markdown("---")
         st.markdown("### 📋 匯入紀錄")
         for log in st.session_state.upload_log[-12:]:
             st.caption(log)
@@ -490,7 +399,6 @@ if data.empty:
         "<p style='font-size:13px; color:gray;'>僅需：姓名<br>（+學年度更精準）</p>"
         "</div>"
         "</div>"
-        "<p style='color:gray; margin-top:20px;'>或點擊「載入三階段示範資料」快速體驗</p>"
         "</div>",
         unsafe_allow_html=True
     )
@@ -1111,11 +1019,9 @@ with tab5:
     st.subheader("📋 資料品質報告")
     quality = []
     for col_q in data.columns:
-        non_null = data[col_q].notna().sum()
+        col_series = safe_get_series(data, col_q)
+        non_null = int(col_series.notna().sum())
         total_rows = len(data)
-        # 處理可能的 DataFrame 類型（重複欄名）
-        if isinstance(non_null, pd.Series):
-            non_null = int(non_null.iloc[0])
         rate_q = "{:.1f}%".format(non_null / total_rows * 100) if total_rows > 0 else "0%"
         quality.append({
             "欄位": col_q,
