@@ -18,6 +18,77 @@ st.set_page_config(
 )
 
 # ============================================================
+# 深色模式相容 CSS
+# ============================================================
+st.markdown("""
+<style>
+    /* 側邊欄提示卡片 */
+    .sidebar-card {
+        background: rgba(255, 152, 56, 0.15);
+        border: 1px solid rgba(255, 152, 56, 0.4);
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        color: inherit;
+    }
+    .sidebar-card small {
+        color: inherit;
+        opacity: 0.9;
+    }
+    .sidebar-card b {
+        color: #FFB74D;
+    }
+
+    /* 主畫面引導卡片 */
+    .guide-container {
+        text-align: center;
+        padding: 40px 20px;
+    }
+    .guide-cards {
+        display: flex;
+        justify-content: center;
+        gap: 24px;
+        margin-top: 30px;
+        flex-wrap: wrap;
+    }
+    .guide-card {
+        background: rgba(255, 152, 56, 0.12);
+        border: 1px solid rgba(255, 152, 56, 0.35);
+        padding: 24px 18px;
+        border-radius: 14px;
+        width: 220px;
+        transition: transform 0.2s, border-color 0.2s;
+        color: inherit;
+    }
+    .guide-card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(255, 152, 56, 0.7);
+    }
+    .guide-card h3 {
+        margin: 0 0 8px 0;
+        font-size: 1.15em;
+        color: #FFB74D;
+    }
+    .guide-card p {
+        font-size: 0.85em;
+        margin: 0;
+        opacity: 0.8;
+        color: inherit;
+    }
+    .guide-arrow {
+        font-size: 2em;
+        margin-top: 10px;
+        opacity: 0.6;
+    }
+
+    /* Plotly 圖表背景透明 */
+    .js-plotly-plot .plotly .main-svg {
+        background: transparent !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
 # Session State 初始化
 # ============================================================
 DEFAULT_STATES = {
@@ -247,10 +318,8 @@ def merge_all_phases():
 
 
 def compute_school_conversion(df, school_col="畢業學校"):
-    """計算每所學校的三階段精準轉換率"""
     if school_col not in df.columns:
         return pd.DataFrame()
-
     schools = df[school_col].dropna().unique()
     results = []
     for school in schools:
@@ -258,13 +327,9 @@ def compute_school_conversion(df, school_col="畢業學校"):
         n1 = len(sd)
         n2 = len(sd[sd["二階甄試"] == "✅"]) if "二階甄試" in sd.columns else 0
         nf = len(sd[sd["最終入學"] == "✅"]) if "最終入學" in sd.columns else 0
-
         rate_1to2 = n2 / n1 * 100 if n1 > 0 else 0
         rate_2tof = nf / n2 * 100 if n2 > 0 else 0
         rate_1tof = nf / n1 * 100 if n1 > 0 else 0
-        lost_1to2 = n1 - n2
-        lost_2tof = n2 - nf
-
         results.append({
             "學校": school,
             "①一階報名": n1,
@@ -273,8 +338,8 @@ def compute_school_conversion(df, school_col="畢業學校"):
             "一→二轉換率": rate_1to2,
             "二→入學轉換率": rate_2tof,
             "總轉換率(一→入學)": rate_1tof,
-            "一→二流失": lost_1to2,
-            "二→入學流失": lost_2tof,
+            "一→二流失": n1 - n2,
+            "二→入學流失": n2 - nf,
         })
     result_df = pd.DataFrame(results)
     if not result_df.empty:
@@ -283,10 +348,8 @@ def compute_school_conversion(df, school_col="畢業學校"):
 
 
 def compute_dept_conversion(df, dept_col="報考科系"):
-    """計算每個科系的三階段精準轉換率"""
     if dept_col not in df.columns:
         return pd.DataFrame()
-
     depts = df[dept_col].dropna().unique()
     results = []
     for dept in sorted(depts):
@@ -294,11 +357,9 @@ def compute_dept_conversion(df, dept_col="報考科系"):
         n1 = len(dd)
         n2 = len(dd[dd["二階甄試"] == "✅"]) if "二階甄試" in dd.columns else 0
         nf = len(dd[dd["最終入學"] == "✅"]) if "最終入學" in dd.columns else 0
-
         rate_1to2 = n2 / n1 * 100 if n1 > 0 else 0
         rate_2tof = nf / n2 * 100 if n2 > 0 else 0
         rate_1tof = nf / n1 * 100 if n1 > 0 else 0
-
         results.append({
             "科系": dept,
             "①一階報名": n1,
@@ -317,19 +378,31 @@ def format_pct(val):
     return "{:.1f}%".format(val)
 
 
+def dark_friendly_plotly(fig):
+    """讓 Plotly 圖表自適應深色模式"""
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="rgba(255,255,255,0.85)",
+        xaxis=dict(gridcolor="rgba(255,255,255,0.1)"),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.1)"),
+    )
+    return fig
+
+
 # ============================================================
 # 側邊欄
 # ============================================================
 with st.sidebar:
     st.markdown("## 🎓 HWU 招生分析系統")
     st.markdown(
-        "<div style='background:#FFF3E8; padding:10px; border-radius:8px; margin-bottom:10px;'>"
-        "<small>📌 <b>三階段匯入說明</b><br>"
-        "① 一階報名：完整欄位（學年度、科系、姓名、學校、座標、身分證）<br>"
-        "② 二階甄試：姓名 + 學年度 + 成績欄位<br>"
-        "③ 最終入學：僅需姓名（+學年度）<br>"
-        "系統以<b>姓名+學年度</b>自動串接比對</small>"
-        "</div>",
+        '<div class="sidebar-card">'
+        '<small>📌 <b>三階段匯入說明</b><br>'
+        '① 一階報名：完整欄位（學年度、科系、姓名、學校、座標、身分證）<br>'
+        '② 二階甄試：姓名 + 學年度 + 成績欄位<br>'
+        '③ 最終入學：僅需姓名（+學年度）<br>'
+        '系統以<b>姓名+學年度</b>自動串接比對</small>'
+        '</div>',
         unsafe_allow_html=True
     )
     st.markdown("---")
@@ -444,19 +517,26 @@ data = st.session_state.merged_data
 
 if data.empty:
     st.markdown(
-        "<div style='text-align:center; padding:50px 20px;'>"
-        "<h2>👈 請先從左側匯入各階段資料</h2>"
-        "<div style='display:flex; justify-content:center; gap:30px; margin-top:30px;'>"
-        "<div style='background:#FFF3E8; padding:20px; border-radius:12px; width:220px;'>"
-        "<h3>📋 一階報名</h3>"
-        "<p style='font-size:13px; color:gray;'>學年度、科系、姓名<br>學校、座標、身分證</p></div>"
-        "<div style='background:#FFF3E8; padding:20px; border-radius:12px; width:220px;'>"
-        "<h3>📝 二階甄試</h3>"
-        "<p style='font-size:13px; color:gray;'>姓名、學年度<br>+ 成績欄位（選填）</p></div>"
-        "<div style='background:#FFF3E8; padding:20px; border-radius:12px; width:220px;'>"
-        "<h3>🎓 最終入學</h3>"
-        "<p style='font-size:13px; color:gray;'>僅需：姓名<br>（+學年度更精準）</p></div>"
-        "</div></div>",
+        '<div class="guide-container">'
+        '<h2>👈 請先從左側匯入各階段資料</h2>'
+        '<div class="guide-cards">'
+        '  <div class="guide-card">'
+        '    <h3>📋 一階報名</h3>'
+        '    <p>學年度、科系、姓名<br>學校、座標、身分證</p>'
+        '  </div>'
+        '  <div class="guide-arrow">→</div>'
+        '  <div class="guide-card">'
+        '    <h3>📝 二階甄試</h3>'
+        '    <p>姓名、學年度<br>+ 成績欄位（選填）</p>'
+        '  </div>'
+        '  <div class="guide-arrow">→</div>'
+        '  <div class="guide-card">'
+        '    <h3>🎓 最終入學</h3>'
+        '    <p>僅需：姓名<br>（+學年度更精準）</p>'
+        '  </div>'
+        '</div>'
+        '<p style="margin-top:30px; opacity:0.5;">系統將以 <b>姓名 + 學年度</b> 自動串接三階段資料，計算精準轉換率</p>'
+        '</div>',
         unsafe_allow_html=True
     )
     st.stop()
@@ -519,6 +599,7 @@ with tab0:
             connector=dict(line=dict(color="#E8792F", width=2)),
         ))
         fig_funnel.update_layout(title="招生漏斗", height=400)
+        dark_friendly_plotly(fig_funnel)
         st.plotly_chart(fig_funnel, use_container_width=True)
 
     with col_fun2:
@@ -582,6 +663,7 @@ with tab0:
                 barmode="group", title="各科系階段轉換率比較（%）",
                 yaxis_title="轉換率 (%)", height=500
             )
+            dark_friendly_plotly(fig_dept_conv)
             st.plotly_chart(fig_dept_conv, use_container_width=True)
 
     if "學年度" in data.columns and data["學年度"].nunique() > 1 and sel_yr_funnel == "全部":
@@ -622,6 +704,7 @@ with tab0:
                 text=yf_df["最終入學"], textposition="top center"
             ))
             fig_yf.update_layout(title="歷年各階段人數", height=400)
+            dark_friendly_plotly(fig_yf)
             st.plotly_chart(fig_yf, use_container_width=True)
 
         with col_yf2:
@@ -631,23 +714,24 @@ with tab0:
                 mode="lines+markers+text", name="一→二%",
                 line=dict(color="#E8792F", width=2, dash="dot"),
                 text=yf_df["一→二%"].apply(lambda v: "{:.1f}%".format(v)),
-                textposition="top center"
+                textposition="top left"
             ))
             fig_rate.add_trace(go.Scatter(
                 x=yf_df["學年度"], y=yf_df["二→入學%"],
                 mode="lines+markers+text", name="二→入學%",
                 line=dict(color="#B84500", width=2, dash="dot"),
                 text=yf_df["二→入學%"].apply(lambda v: "{:.1f}%".format(v)),
-                textposition="top center"
+                textposition="top right"
             ))
             fig_rate.add_trace(go.Scatter(
                 x=yf_df["學年度"], y=yf_df["總轉換%"],
                 mode="lines+markers+text", name="總轉換%",
-                line=dict(color="#333333", width=3),
+                line=dict(color="#FFFFFF", width=3),
                 text=yf_df["總轉換%"].apply(lambda v: "{:.1f}%".format(v)),
-                textposition="top center"
+                textposition="bottom center"
             ))
             fig_rate.update_layout(title="歷年各階段轉換率趨勢（%）", yaxis_title="%", height=400)
+            dark_friendly_plotly(fig_rate)
             st.plotly_chart(fig_rate, use_container_width=True)
 
 # ============================================================
@@ -694,13 +778,13 @@ with tab1:
         if len(valid_coords) > 0:
             col_m1, col_m2 = st.columns([3, 1])
             with col_m1:
-                m = folium.Map(location=[23.5, 120.5], zoom_start=8, tiles="CartoDB positron")
+                m = folium.Map(location=[23.5, 120.5], zoom_start=8, tiles="CartoDB dark_matter")
                 folium.Marker(
                     location=[22.9908, 120.2133],
                     popup="中華醫事科技大學",
                     icon=folium.Icon(color="red", icon="star", prefix="fa"),
                 ).add_to(m)
-                color_map = {"已入學": "#B84500", "二階未入學": "#E8792F", "僅一階": "#FDD7B4"}
+                color_map = {"已入學": "#FF6B35", "二階未入學": "#FFB347", "僅一階": "#87CEEB"}
                 if len(valid_coords) > 1000:
                     display_coords = valid_coords.sample(1000, random_state=42)
                     st.caption("⚡ 地圖顯示抽樣 1,000 筆（共 {:,} 筆）".format(len(valid_coords)))
@@ -708,7 +792,7 @@ with tab1:
                     display_coords = valid_coords
                 for _, row in display_coords.iterrows():
                     status = row.get("目前狀態", "僅一階")
-                    color = color_map.get(status, "#E8792F")
+                    color = color_map.get(status, "#FFB347")
                     popup_parts = []
                     for field in ["畢業學校", "報考科系", "學年度", "目前狀態"]:
                         if field in row.index and pd.notna(row.get(field)):
@@ -732,11 +816,11 @@ with tab1:
                     st.markdown("**📊 階段分布**")
                     for status_val, cnt in valid_coords["目前狀態"].value_counts().items():
                         if status_val == "已入學":
-                            icon = "🟤"
-                        elif status_val == "二階未入學":
                             icon = "🟠"
-                        else:
+                        elif status_val == "二階未入學":
                             icon = "🟡"
+                        else:
+                            icon = "🔵"
                         st.caption("{} {}：{}".format(icon, status_val, cnt))
                 if "畢業學校" in valid_coords.columns:
                     st.markdown("**📍 主要來源學校**")
@@ -805,6 +889,7 @@ with tab2:
                     marker_color="#B84500"
                 ))
                 fig_dc_bar.update_layout(barmode="group", title="各科系三階段人數比較", height=450)
+                dark_friendly_plotly(fig_dc_bar)
                 st.plotly_chart(fig_dc_bar, use_container_width=True)
 
             with col_dc2:
@@ -819,18 +904,19 @@ with tab2:
                 fig_dc_rate.add_trace(go.Scatter(
                     x=dept_conv["科系"], y=dept_conv["二→入學轉換率"],
                     mode="lines+markers+text", name="二→入學",
-                    line=dict(color="#B84500", width=2),
+                    line=dict(color="#FF6B35", width=2),
                     text=dept_conv["二→入學轉換率"].apply(lambda v: "{:.1f}%".format(v)),
                     textposition="top center"
                 ))
                 fig_dc_rate.add_trace(go.Scatter(
                     x=dept_conv["科系"], y=dept_conv["總轉換率(一→入學)"],
                     mode="lines+markers+text", name="總轉換率",
-                    line=dict(color="#333", width=3),
+                    line=dict(color="#FFFFFF", width=3),
                     text=dept_conv["總轉換率(一→入學)"].apply(lambda v: "{:.1f}%".format(v)),
                     textposition="top center"
                 ))
                 fig_dc_rate.update_layout(title="各科系轉換率比較（%）", yaxis_title="%", height=450)
+                dark_friendly_plotly(fig_dc_rate)
                 st.plotly_chart(fig_dc_rate, use_container_width=True)
 
             st.subheader("🔍 科系瓶頸分析")
@@ -864,6 +950,7 @@ with tab2:
                 markers=True, title="各科系歷年報考人數趨勢"
             )
             fig_line.update_layout(height=450)
+            dark_friendly_plotly(fig_line)
             st.plotly_chart(fig_line, use_container_width=True)
 
 # ============================================================
@@ -903,7 +990,6 @@ with tab3:
         else:
             school_top = school_conv.head(top_n).copy()
 
-            # ---- KPI ----
             st.subheader("📊 整體轉換率概覽")
             total_s1 = int(school_conv["①一階報名"].sum())
             total_s2 = int(school_conv["②二階甄試"].sum())
@@ -925,7 +1011,6 @@ with tab3:
                 overall_1f = total_sf / total_s1 * 100 if total_s1 > 0 else 0
                 st.metric("整體總轉換%", "{:.1f}%".format(overall_1f))
 
-            # ---- 精準轉換率表 ----
             st.subheader("📋 Top {} 學校三階段精準轉換率".format(top_n))
             display_sc = school_top.copy()
             display_sc["一→二轉換率"] = display_sc["一→二轉換率"].apply(format_pct)
@@ -933,7 +1018,6 @@ with tab3:
             display_sc["總轉換率(一→入學)"] = display_sc["總轉換率(一→入學)"].apply(format_pct)
             st.dataframe(display_sc, use_container_width=True, hide_index=True)
 
-            # ---- 三階段人數堆疊圖 ----
             st.subheader("📊 各學校三階段人數比較")
             fig_s3 = go.Figure()
             fig_s3.add_trace(go.Bar(
@@ -956,57 +1040,56 @@ with tab3:
                 yaxis={"categoryorder": "total ascending"},
                 title="Top {} 學校三階段人數".format(top_n)
             )
+            dark_friendly_plotly(fig_s3)
             st.plotly_chart(fig_s3, use_container_width=True)
 
-            # ---- 轉換率比較圖 ----
             st.subheader("📈 各學校轉換率比較")
             col_sc1, col_sc2 = st.columns(2)
 
             with col_sc1:
+                sorted_r12 = school_top.sort_values("一→二轉換率", ascending=True)
                 fig_r12 = px.bar(
-                    school_top.sort_values("一→二轉換率", ascending=True),
+                    sorted_r12,
                     x="一→二轉換率", y="學校", orientation="h",
                     title="一階→二階 轉換率排名",
                     color="一→二轉換率",
-                    color_continuous_scale=["#FFCCCC", "#FF6600", "#006600"],
-                    text=school_top.sort_values("一→二轉換率", ascending=True)["一→二轉換率"].apply(
-                        lambda v: "{:.1f}%".format(v)
-                    )
+                    color_continuous_scale=["#FF6666", "#FFB347", "#66BB6A"],
+                    text=sorted_r12["一→二轉換率"].apply(lambda v: "{:.1f}%".format(v))
                 )
                 fig_r12.update_layout(
                     height=max(450, top_n * 28), showlegend=False,
                     xaxis_title="轉換率（%）"
                 )
+                dark_friendly_plotly(fig_r12)
                 st.plotly_chart(fig_r12, use_container_width=True)
 
             with col_sc2:
+                sorted_r1f = school_top.sort_values("總轉換率(一→入學)", ascending=True)
                 fig_r2f = px.bar(
-                    school_top.sort_values("總轉換率(一→入學)", ascending=True),
+                    sorted_r1f,
                     x="總轉換率(一→入學)", y="學校", orientation="h",
                     title="一階→入學 總轉換率排名",
                     color="總轉換率(一→入學)",
-                    color_continuous_scale=["#FFCCCC", "#FF6600", "#006600"],
-                    text=school_top.sort_values("總轉換率(一→入學)", ascending=True)["總轉換率(一→入學)"].apply(
-                        lambda v: "{:.1f}%".format(v)
-                    )
+                    color_continuous_scale=["#FF6666", "#FFB347", "#66BB6A"],
+                    text=sorted_r1f["總轉換率(一→入學)"].apply(lambda v: "{:.1f}%".format(v))
                 )
                 fig_r2f.update_layout(
                     height=max(450, top_n * 28), showlegend=False,
                     xaxis_title="轉換率（%）"
                 )
+                dark_friendly_plotly(fig_r2f)
                 st.plotly_chart(fig_r2f, use_container_width=True)
 
-            # ---- 流失分析 ----
             st.subheader("📉 各學校流失分析")
             fig_loss = go.Figure()
             fig_loss.add_trace(go.Bar(
                 name="一→二流失", y=school_top["學校"], x=school_top["一→二流失"],
-                orientation="h", marker_color="#FF9999",
+                orientation="h", marker_color="#FF8A80",
                 text=school_top["一→二流失"], textposition="auto"
             ))
             fig_loss.add_trace(go.Bar(
                 name="二→入學流失", y=school_top["學校"], x=school_top["二→入學流失"],
-                orientation="h", marker_color="#CC3333",
+                orientation="h", marker_color="#EF5350",
                 text=school_top["二→入學流失"], textposition="auto"
             ))
             fig_loss.update_layout(
@@ -1015,22 +1098,22 @@ with tab3:
                 title="各學校各階段流失人數（堆疊）",
                 xaxis_title="流失人數"
             )
+            dark_friendly_plotly(fig_loss)
             st.plotly_chart(fig_loss, use_container_width=True)
 
-            # ---- 散布圖 ----
             st.subheader("🔍 報名量 vs 總轉換率 散布圖")
             fig_scatter = px.scatter(
                 school_top, x="①一階報名", y="總轉換率(一→入學)",
                 size="③最終入學", color="一→二轉換率",
                 hover_name="學校",
-                color_continuous_scale=["#FF6666", "#FFCC00", "#00AA00"],
+                color_continuous_scale=["#FF6666", "#FFB347", "#66BB6A"],
                 title="報名量 vs 總轉換率（氣泡大小＝入學人數）",
                 labels={"①一階報名": "一階報名人數", "總轉換率(一→入學)": "總轉換率(%)"}
             )
             fig_scatter.update_layout(height=500)
+            dark_friendly_plotly(fig_scatter)
             st.plotly_chart(fig_scatter, use_container_width=True)
 
-            # ---- 學校 × 科系交叉分析 ----
             if "報考科系" in t3_data.columns and sel_dept_t3 == "全部":
                 st.subheader("🔀 來源學校 × 科系 入學交叉分析")
                 top_school_names = school_top["學校"].tolist()
@@ -1045,11 +1128,11 @@ with tab3:
                         color_continuous_scale="Oranges", aspect="auto"
                     )
                     fig_heat.update_layout(height=max(400, len(top_school_names) * 28))
+                    dark_friendly_plotly(fig_heat)
                     st.plotly_chart(fig_heat, use_container_width=True)
                 else:
                     st.info("無入學交叉資料可顯示")
 
-            # ---- 管理建議 ----
             st.subheader("⭐ 來源學校經營建議")
             all_sc = school_conv.copy()
             total_all = int(all_sc["①一階報名"].sum())
@@ -1060,7 +1143,6 @@ with tab3:
                 ratio = row["①一階報名"] / total_all * 100 if total_all > 0 else 0
                 cum_ratio = cumulative / total_all * 100 if total_all > 0 else 0
                 r_total = row["總轉換率(一→入學)"]
-                r_12 = row["一→二轉換率"]
 
                 if cum_ratio <= 50 and r_total >= 30:
                     level = "⭐⭐⭐ 重點深耕"
@@ -1092,7 +1174,6 @@ with tab3:
             recs_df = pd.DataFrame(recs).head(top_n)
             st.dataframe(recs_df, use_container_width=True, hide_index=True)
 
-            # ---- 歷年學校趨勢 ----
             if "學年度" in data.columns and data["學年度"].nunique() > 1 and sel_year_t3 == "全部":
                 st.subheader("📈 Top 10 學校歷年入學趨勢")
                 top10_schools = school_conv.head(10)["學校"].tolist()
@@ -1117,6 +1198,7 @@ with tab3:
                         markers=True, title="Top 10 學校歷年報名人數"
                     )
                     fig_ys_n.update_layout(height=450)
+                    dark_friendly_plotly(fig_ys_n)
                     st.plotly_chart(fig_ys_n, use_container_width=True)
 
                 with col_yst2:
@@ -1125,6 +1207,7 @@ with tab3:
                         markers=True, title="Top 10 學校歷年總轉換率（%）"
                     )
                     fig_ys_r.update_layout(height=450, yaxis_title="%")
+                    dark_friendly_plotly(fig_ys_r)
                     st.plotly_chart(fig_ys_r, use_container_width=True)
 
 # ============================================================
@@ -1168,20 +1251,12 @@ with tab4:
                     marker_color=color, text=ys_df[col_name], textposition="outside"
                 ))
             fig_trend.update_layout(barmode="group", title="歷年各階段人數", height=400)
+            dark_friendly_plotly(fig_trend)
             st.plotly_chart(fig_trend, use_container_width=True)
 
         with col_y2:
-            fig_rate_y = go.Figure()
-            fig_rate_y.add_trace(go.Scatter(
-                x=ys_df["學年度"], y=ys_df["一→二%"].apply(lambda s: float(s) if isinstance(s, (int, float)) else float(str(s).replace('%',''))),
-                mode="lines+markers+text", name="一→二%",
-                line=dict(color="#E8792F", width=2, dash="dot"),
-                text=ys_df["一→二%"].apply(lambda v: "{:.1f}%".format(v) if isinstance(v, (int, float)) else v),
-                textposition="top center"
-            ))
-            # 用原始數值重繪
-            fig_rate_y2 = go.Figure()
             raw_ys = pd.DataFrame(yearly_stats)
+            fig_rate_y2 = go.Figure()
             fig_rate_y2.add_trace(go.Scatter(
                 x=raw_ys["學年度"], y=raw_ys["一→二%"],
                 mode="lines+markers+text", name="一→二%",
@@ -1192,18 +1267,19 @@ with tab4:
             fig_rate_y2.add_trace(go.Scatter(
                 x=raw_ys["學年度"], y=raw_ys["二→入學%"],
                 mode="lines+markers+text", name="二→入學%",
-                line=dict(color="#B84500", width=2),
+                line=dict(color="#FF6B35", width=2),
                 text=raw_ys["二→入學%"].apply(lambda v: "{:.1f}%".format(v)),
                 textposition="top right"
             ))
             fig_rate_y2.add_trace(go.Scatter(
                 x=raw_ys["學年度"], y=raw_ys["總轉換%"],
                 mode="lines+markers+text", name="總轉換%",
-                line=dict(color="#333", width=3),
+                line=dict(color="#FFFFFF", width=3),
                 text=raw_ys["總轉換%"].apply(lambda v: "{:.1f}%".format(v)),
                 textposition="bottom center"
             ))
             fig_rate_y2.update_layout(title="歷年轉換率趨勢（%）", yaxis_title="%", height=400)
+            dark_friendly_plotly(fig_rate_y2)
             st.plotly_chart(fig_rate_y2, use_container_width=True)
 
         st.subheader("📊 年度增減分析")
@@ -1261,6 +1337,7 @@ with tab4:
                 markers=True, title="Top 10 來源學校歷年趨勢"
             )
             fig_st.update_layout(height=450)
+            dark_friendly_plotly(fig_st)
             st.plotly_chart(fig_st, use_container_width=True)
 
 # ============================================================
