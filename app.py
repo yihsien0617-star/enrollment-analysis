@@ -60,60 +60,116 @@ def safe_sort_years(year_series):
 def compute_file_hash(file_bytes, filename):
     return hashlib.md5(filename.encode() + file_bytes).hexdigest()
 
+def deduplicate_columns(df):
+    """處理重複欄位名稱：重複的欄位加上 _2, _3 等後綴"""
+    cols = list(df.columns)
+    seen = {}
+    new_cols = []
+    for c in cols:
+        c_str = str(c).strip()
+        if c_str in seen:
+            seen[c_str] += 1
+            new_cols.append("{}_{}".format(c_str, seen[c_str]))
+        else:
+            seen[c_str] = 1
+            new_cols.append(c_str)
+    df.columns = new_cols
+    return df
+
 def clean_column_names(df, phase="phase1"):
+    # 先處理重複欄位
+    df = deduplicate_columns(df)
+
     col_mapping = {}
     for col in df.columns:
         c = str(col).strip().replace(" ", "")
-        if "學年" in c:
+        if "學年" in c and col not in col_mapping.values():
             col_mapping[col] = "學年度"
-        elif any(k in c for k in ["科系", "報考", "系所", "系別", "錄取科系"]):
-            col_mapping[col] = "報考科系"
-        elif "姓名" in c:
+        elif any(k in c for k in ["科系", "報考", "系所", "系別", "錄取科系"]) and "學年" not in c:
+            if "報考科系" not in col_mapping.values():
+                col_mapping[col] = "報考科系"
+        elif "姓名" in c and "姓名" not in col_mapping.values():
             col_mapping[col] = "姓名"
-        elif any(k in c for k in ["畢業", "來源", "學校", "高中"]):
+        elif any(k in c for k in ["畢業", "來源", "高中"]) and "學校" in c:
+            if "畢業學校" not in col_mapping.values():
+                col_mapping[col] = "畢業學校"
+        elif "學校" in c and "畢業學校" not in col_mapping.values() and "科系" not in c:
             col_mapping[col] = "畢業學校"
         elif any(k in c for k in ["經緯", "座標", "坐標"]):
-            col_mapping[col] = "經緯度"
+            if "經緯度" not in col_mapping.values():
+                col_mapping[col] = "經緯度"
         elif any(k in c for k in ["身分證", "身份證"]) or "ID" in c.upper():
-            col_mapping[col] = "身分證字號"
-        elif "緯度" in c or "lat" in c.lower():
-            col_mapping[col] = "緯度"
-        elif "經度" in c or "lon" in c.lower() or "lng" in c.lower():
-            col_mapping[col] = "經度"
+            if "身分證字號" not in col_mapping.values():
+                col_mapping[col] = "身分證字號"
+        elif ("緯度" in c or c.lower() == "lat") and "經" not in c:
+            if "緯度" not in col_mapping.values():
+                col_mapping[col] = "緯度"
+        elif ("經度" in c or c.lower() in ("lon", "lng")) and "緯" not in c:
+            if "經度" not in col_mapping.values():
+                col_mapping[col] = "經度"
         elif any(k in c for k in ["面試", "甄試", "筆試", "成績", "分數", "總分"]):
-            col_mapping[col] = col
+            pass  # 保留原始欄位名
         elif any(k in c for k in ["錄取", "報到", "入學", "狀態"]):
-            col_mapping[col] = "入學狀態"
+            if "入學狀態" not in col_mapping.values():
+                col_mapping[col] = "入學狀態"
     df = df.rename(columns=col_mapping)
+
+    # 再次移除重命名後可能出現的重複
+    df = deduplicate_columns(df)
     return df
 
 def standardize_data(df):
     if "學年度" in df.columns:
-        df["學年度"] = df["學年度"].apply(
+        # 確保是 Series
+        col_data = df["學年度"]
+        if isinstance(col_data, pd.DataFrame):
+            col_data = col_data.iloc[:, 0]
+        df = df.copy()
+        df["學年度"] = col_data.apply(
             lambda x: str(int(float(x))) if pd.notna(x) else None
         )
-    for col in ["報考科系", "畢業學校", "姓名", "身分證字號"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace({"nan": None, "None": None, "": None})
+
+    for col_name in ["報考科系", "畢業學校", "姓名", "身分證字號"]:
+        if col_name in df.columns:
+            col_data = df[col_name]
+            # 如果同名欄位多於一個，取第一個
+            if isinstance(col_data, pd.DataFrame):
+                col_data = col_data.iloc[:, 0]
+            df = df.copy()
+            df[col_name] = col_data.astype(str).str.strip()
+            df[col_name] = df[col_name].replace({"nan": None, "None": None, "": None})
     return df
 
 def parse_coordinates(df):
     if "緯度" in df.columns and "經度" in df.columns:
-        df["緯度"] = pd.to_numeric(df["緯度"], errors="coerce")
-        df["經度"] = pd.to_numeric(df["經度"], errors="coerce")
+        lat_col = df["緯度"]
+        lon_col = df["經度"]
+        if isinstance(lat_col, pd.DataFrame):
+            lat_col = lat_col.iloc[:, 0]
+        if isinstance(lon_col, pd.DataFrame):
+            lon_col = lon_col.iloc[:, 0]
+        df = df.copy()
+        df["緯度"] = pd.to_numeric(lat_col, errors="coerce")
+        df["經度"] = pd.to_numeric(lon_col, errors="coerce")
         return df
+
     if "經緯度" not in df.columns:
         return df
+
+    coord_col = df["經緯度"]
+    if isinstance(coord_col, pd.DataFrame):
+        coord_col = coord_col.iloc[:, 0]
+
     lats, lons = [], []
-    for val in df["經緯度"]:
+    for val in coord_col:
         try:
             val_str = str(val).strip()
             if val_str in ("", "nan", "None", "NaN"):
                 lats.append(None)
                 lons.append(None)
                 continue
-            val_str = val_str.replace("(", "").replace(")", "").replace("（", "").replace("）", "")
+            for ch in ["(", ")", "（", "）", "「", "」"]:
+                val_str = val_str.replace(ch, "")
             parts = val_str.replace("，", ",").split(",")
             if len(parts) == 2:
                 a = float(parts[0].strip())
@@ -133,6 +189,8 @@ def parse_coordinates(df):
         except Exception:
             lats.append(None)
             lons.append(None)
+
+    df = df.copy()
     df["緯度"] = lats
     df["經度"] = lons
     return df
@@ -153,26 +211,32 @@ def merge_all_phases():
     p1["一階報名"] = "✅"
 
     if not p2.empty:
-        if not all(k in p2.columns for k in merge_keys):
-            merge_keys_p2 = ["姓名"]
+        available_keys_p2 = [k for k in merge_keys if k in p2.columns]
+        if not available_keys_p2:
+            available_keys_p2 = ["姓名"] if "姓名" in p2.columns else []
+        if available_keys_p2:
+            p2_extra_cols = [c for c in p2.columns if c not in p1.columns]
+            p2_cols = available_keys_p2 + p2_extra_cols
+            p2_merge = p2[p2_cols].drop_duplicates(subset=available_keys_p2, keep="last").copy()
+            p2_merge["二階甄試"] = "✅"
+            p1 = p1.merge(p2_merge, on=available_keys_p2, how="left", suffixes=("", "_二階"))
         else:
-            merge_keys_p2 = merge_keys
-        p2_cols = [c for c in p2.columns if c in merge_keys_p2 or c not in p1.columns]
-        p2_merge = p2[p2_cols].copy()
-        p2_merge["二階甄試"] = "✅"
-        p1 = p1.merge(p2_merge, on=merge_keys_p2, how="left", suffixes=("", "_二階"))
+            p1["二階甄試"] = None
     else:
         p1["二階甄試"] = None
 
     if not pf.empty:
-        if not all(k in pf.columns for k in merge_keys):
-            merge_keys_pf = ["姓名"]
+        available_keys_pf = [k for k in merge_keys if k in pf.columns]
+        if not available_keys_pf:
+            available_keys_pf = ["姓名"] if "姓名" in pf.columns else []
+        if available_keys_pf:
+            pf_extra_cols = [c for c in pf.columns if c not in p1.columns]
+            pf_cols = available_keys_pf + pf_extra_cols
+            pf_merge = pf[pf_cols].drop_duplicates(subset=available_keys_pf, keep="last").copy()
+            pf_merge["最終入學"] = "✅"
+            p1 = p1.merge(pf_merge, on=available_keys_pf, how="left", suffixes=("", "_入學"))
         else:
-            merge_keys_pf = merge_keys
-        pf_cols = [c for c in pf.columns if c in merge_keys_pf or c not in p1.columns]
-        pf_merge = pf[pf_cols].copy()
-        pf_merge["最終入學"] = "✅"
-        p1 = p1.merge(pf_merge, on=merge_keys_pf, how="left", suffixes=("", "_入學"))
+            p1["最終入學"] = None
     else:
         p1["最終入學"] = None
 
@@ -191,7 +255,10 @@ def merge_all_phases():
     p1["目前狀態"] = p1.apply(get_stage, axis=1)
 
     if "身分證字號" in p1.columns and "學年度" in p1.columns:
-        p1 = p1.drop_duplicates(subset=["身分證字號", "學年度"], keep="last")
+        mask = p1["身分證字號"].notna() & (p1["身分證字號"] != "")
+        p1_with_id = p1[mask].drop_duplicates(subset=["身分證字號", "學年度"], keep="last")
+        p1_no_id = p1[~mask].drop_duplicates(subset=["姓名", "學年度"], keep="last")
+        p1 = pd.concat([p1_with_id, p1_no_id], ignore_index=True)
     elif "姓名" in p1.columns and "學年度" in p1.columns:
         p1 = p1.drop_duplicates(subset=["姓名", "學年度"], keep="last")
 
@@ -267,9 +334,9 @@ with st.sidebar:
         "<div style='background:#FFF3E8; padding:10px; border-radius:8px; margin-bottom:10px;'>"
         "<small>📌 <b>三階段匯入說明</b><br>"
         "① 一階報名：完整欄位（學年度、科系、姓名、學校、座標、身分證）<br>"
-        "② 二階甄試：姓名 + 成績欄位即可<br>"
-        "③ 最終入學：僅需姓名（+學年度）即可<br>"
-        "系統會以<b>姓名</b>自動串接比對</small>"
+        "② 二階甄試：姓名 + 學年度 + 成績欄位<br>"
+        "③ 最終入學：僅需姓名（+學年度）<br>"
+        "系統以<b>姓名+學年度</b>自動串接比對</small>"
         "</div>",
         unsafe_allow_html=True
     )
@@ -307,28 +374,42 @@ with st.sidebar:
                 continue
             try:
                 new_df = pd.read_excel(uf)
+
+                # 偵錯：記錄原始欄位名稱
+                original_cols = list(new_df.columns)
+
                 new_df = clean_column_names(new_df, phase=phase_key)
                 new_df = standardize_data(new_df)
                 if phase_key == "phase1":
                     new_df = parse_coordinates(new_df)
+
                 if "姓名" not in new_df.columns:
-                    msg = "❌ {}（{}）：缺少「姓名」欄位".format(uf.name, phase_label)
+                    msg = "❌ {}（{}）：缺少「姓名」欄位。原始欄位：{}".format(
+                        uf.name, phase_label,
+                        ", ".join(str(c) for c in original_cols[:10])
+                    )
                     st.session_state.upload_log.append(msg)
                     continue
+
                 existing = st.session_state["{}_data".format(phase_key)]
                 if existing.empty:
                     st.session_state["{}_data".format(phase_key)] = new_df
                 else:
-                    combined = pd.concat([existing, new_df], ignore_index=True)
+                    # 對齊欄位後合併
+                    combined = pd.concat([existing, new_df], ignore_index=True, sort=False)
                     combined = combined.drop_duplicates(keep="last")
                     st.session_state["{}_data".format(phase_key)] = combined
+
                 row_count = len(new_df)
                 year_info = ""
                 if "學年度" in new_df.columns:
                     yrs = safe_sort_years(new_df["學年度"])
                     year_info = "（{}）".format(", ".join(yrs))
+                col_info = ", ".join(list(new_df.columns)[:8])
                 st.session_state.uploaded_hashes[fhash] = uf.name
-                msg = "✅ {}【{}】：{} 筆 {}".format(uf.name, phase_label, row_count, year_info)
+                msg = "✅ {}【{}】：{} 筆 {} [{}]".format(
+                    uf.name, phase_label, row_count, year_info, col_info
+                )
                 st.session_state.upload_log.append(msg)
             except Exception as e:
                 msg = "❌ {}（{}）：{}".format(uf.name, phase_label, str(e))
@@ -444,18 +525,9 @@ with tab0:
         funnel_data = funnel_data[funnel_data["學年度"] == sel_yr_funnel]
 
     n_total = len(funnel_data)
-    if "一階報名" in funnel_data.columns:
-        n_phase1 = len(funnel_data[funnel_data["一階報名"] == "✅"])
-    else:
-        n_phase1 = n_total
-    if "二階甄試" in funnel_data.columns:
-        n_phase2 = len(funnel_data[funnel_data["二階甄試"] == "✅"])
-    else:
-        n_phase2 = 0
-    if "最終入學" in funnel_data.columns:
-        n_final = len(funnel_data[funnel_data["最終入學"] == "✅"])
-    else:
-        n_final = 0
+    n_phase1 = len(funnel_data[funnel_data["一階報名"] == "✅"]) if "一階報名" in funnel_data.columns else n_total
+    n_phase2 = len(funnel_data[funnel_data["二階甄試"] == "✅"]) if "二階甄試" in funnel_data.columns else 0
+    n_final = len(funnel_data[funnel_data["最終入學"] == "✅"]) if "最終入學" in funnel_data.columns else 0
 
     kpi_cols = st.columns(4)
     with kpi_cols[0]:
@@ -705,11 +777,11 @@ with tab2:
                 dept_enroll = []
                 for dept in dept_counts["科系"]:
                     dd = t2_data[t2_data["報考科系"] == dept]
-                    total = len(dd)
-                    enrolled = len(dd[dd["最終入學"] == "✅"])
+                    total_d = len(dd)
+                    enrolled_d = len(dd[dd["最終入學"] == "✅"])
                     dept_enroll.append({
-                        "科系": dept, "報名": total, "入學": enrolled,
-                        "入學率": enrolled / total * 100 if total > 0 else 0
+                        "科系": dept, "報名": total_d, "入學": enrolled_d,
+                        "入學率": enrolled_d / total_d * 100 if total_d > 0 else 0
                     })
                 de_df = pd.DataFrame(dept_enroll)
                 fig_enroll = go.Figure()
@@ -816,12 +888,12 @@ with tab3:
             school_conv = []
             for school_name in school_counts["畢業學校"]:
                 sd = t3_data[t3_data["畢業學校"] == school_name]
-                total = len(sd)
-                enrolled = len(sd[sd["最終入學"] == "✅"])
-                rate_str = "{:.1f}%".format(enrolled / total * 100) if total > 0 else "0%"
+                total_s = len(sd)
+                enrolled_s = len(sd[sd["最終入學"] == "✅"])
+                rate_s = "{:.1f}%".format(enrolled_s / total_s * 100) if total_s > 0 else "0%"
                 school_conv.append({
-                    "學校": school_name, "報名": total, "入學": enrolled,
-                    "轉換率": rate_str
+                    "學校": school_name, "報名": total_s, "入學": enrolled_s,
+                    "轉換率": rate_s
                 })
             st.dataframe(pd.DataFrame(school_conv), use_container_width=True, hide_index=True)
 
@@ -843,7 +915,7 @@ with tab3:
         total_t3 = len(t3_data)
         recs = []
         cumulative = 0
-        for school_name, cnt in all_school_counts.items():
+        for school_name_rec, cnt in all_school_counts.items():
             cumulative += cnt
             ratio = cnt / total_t3 * 100 if total_t3 > 0 else 0
             cum_ratio = cumulative / total_t3 * 100 if total_t3 > 0 else 0
@@ -854,7 +926,7 @@ with tab3:
             else:
                 level = "⭐ 一般維護"
             recs.append({
-                "學校": school_name,
+                "學校": school_name_rec,
                 "人數": cnt,
                 "佔比(%)": round(ratio, 1),
                 "累積佔比(%)": round(cum_ratio, 1),
@@ -877,12 +949,12 @@ with tab4:
         yearly_stats = []
         for yr in years_sorted:
             yd = data[data["學年度"] == yr]
-            row = {"學年度": yr, "一階報名": len(yd)}
+            row_ys = {"學年度": yr, "一階報名": len(yd)}
             if "二階甄試" in yd.columns:
-                row["二階甄試"] = len(yd[yd["二階甄試"] == "✅"])
+                row_ys["二階甄試"] = len(yd[yd["二階甄試"] == "✅"])
             if "最終入學" in yd.columns:
-                row["最終入學"] = len(yd[yd["最終入學"] == "✅"])
-            yearly_stats.append(row)
+                row_ys["最終入學"] = len(yd[yd["最終入學"] == "✅"])
+            yearly_stats.append(row_ys)
         ys_df = pd.DataFrame(yearly_stats)
 
         fig_trend = go.Figure()
@@ -921,19 +993,19 @@ with tab4:
                 for dept in all_depts:
                     a_val = int(da.get(dept, 0))
                     b_val = int(db.get(dept, 0))
-                    diff = b_val - a_val
-                    if diff > 0:
-                        trend = "📈"
-                    elif diff < 0:
-                        trend = "📉"
+                    diff_val = b_val - a_val
+                    if diff_val > 0:
+                        trend_icon = "📈"
+                    elif diff_val < 0:
+                        trend_icon = "📉"
                     else:
-                        trend = "➡️"
+                        trend_icon = "➡️"
                     comparison.append({
                         "科系": dept,
                         year_a: a_val,
                         year_b: b_val,
-                        "增減": diff,
-                        "趨勢": trend
+                        "增減": diff_val,
+                        "趨勢": trend_icon
                     })
                 comp_df = pd.DataFrame(comparison).sort_values("增減", ascending=False)
                 st.dataframe(comp_df, use_container_width=True, hide_index=True)
@@ -1006,7 +1078,9 @@ with tab5:
         if "畢業學校" in data.columns:
             search_school = st.text_input("搜尋學校", key="exp_school")
             if search_school:
-                export_data = export_data[export_data["畢業學校"].str.contains(search_school, na=False)]
+                export_data = export_data[
+                    export_data["畢業學校"].astype(str).str.contains(search_school, na=False)
+                ]
 
     st.caption("篩選結果：{:,} 筆".format(len(export_data)))
 
@@ -1036,15 +1110,18 @@ with tab5:
 
     st.subheader("📋 資料品質報告")
     quality = []
-    for col in data.columns:
-        non_null = data[col].notna().sum()
+    for col_q in data.columns:
+        non_null = data[col_q].notna().sum()
         total_rows = len(data)
-        rate_str = "{:.1f}%".format(non_null / total_rows * 100) if total_rows > 0 else "0%"
+        # 處理可能的 DataFrame 類型（重複欄名）
+        if isinstance(non_null, pd.Series):
+            non_null = int(non_null.iloc[0])
+        rate_q = "{:.1f}%".format(non_null / total_rows * 100) if total_rows > 0 else "0%"
         quality.append({
-            "欄位": col,
+            "欄位": col_q,
             "非空筆數": non_null,
             "總筆數": total_rows,
-            "完整率": rate_str,
+            "完整率": rate_q,
             "空值數": total_rows - non_null,
         })
     st.dataframe(pd.DataFrame(quality), use_container_width=True, hide_index=True)
