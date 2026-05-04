@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-中華醫事科技大學 招生數據分析系統 v5.0
-更新重點：
-- 二階報到資料的畢業學校經緯度統一從一階報名資料讀取
-- 統一轉換率分母為一階人數
-- Module 0-7 完整功能
+中華醫事科技大學 招生數據分析系統 v5.1
+- 三階段分析：一階(報名) → 二階(報到確認) → 最終入學(註冊)
+- 統一轉換率分母 = 一階人數
+- 二階＋最終入學經緯度統一從一階讀取
+- Module 0-6 完整功能
 """
 
 import streamlit as st
@@ -12,9 +12,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import json, re, os
-from collections import Counter
+import re
 
 # ============================================================
 # 頁面設定
@@ -27,7 +25,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# 自訂 CSS
+# CSS
 # ============================================================
 st.markdown("""
 <style>
@@ -47,11 +45,19 @@ st.markdown("""
         color: white; margin: 5px 0;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
-    .metric-card h3 { margin: 0; font-size: 0.9rem; opacity: 0.9; }
-    .metric-card h1 { margin: 5px 0 0 0; font-size: 2.0rem; }
-    .channel-badge {
-        display: inline-block; padding: 5px 15px; border-radius: 20px;
-        font-weight: bold; font-size: 0.85rem; margin: 2px;
+    .metric-card h3 { margin: 0; font-size: 0.85rem; opacity: 0.9; }
+    .metric-card h1 { margin: 5px 0 0 0; font-size: 1.8rem; }
+    .metric-green {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    }
+    .metric-orange {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+    .metric-blue {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .metric-gold {
+        background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
     }
     .section-divider {
         height: 3px;
@@ -68,22 +74,25 @@ st.markdown("""
         padding: 15px; border-radius: 0 10px 10px 0;
         margin: 10px 0; font-size: 0.9rem;
     }
+    .success-box {
+        background: #e8f5e9; border-left: 4px solid #4caf50;
+        padding: 15px; border-radius: 0 10px 10px 0;
+        margin: 10px 0; font-size: 0.9rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">🎓 中華醫事科技大學 招生數據分析系統</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Chung Hwa University of Medical Technology — Enrollment Analytics Platform v5.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Enrollment Analytics Platform v5.1 ｜ 一階報名 → 二階報到 → 最終入學 三階段完整分析</div>', unsafe_allow_html=True)
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
 # ============================================================
-# 常數與輔助函式
+# 常數
 # ============================================================
-
 KNOWN_CHANNELS = [
     "聯合免試", "甄選入學", "技優甄審", "運動績優",
     "身障甄試", "單獨招生", "進修部", "產學攜手",
-    "運動單獨招生", "四技申請", "繁星計畫",
-    "設有專班", "外國學生", "陸生招生", "僑生招生"
+    "運動單獨招生", "四技申請", "繁星計畫"
 ]
 
 CHANNEL_KEYWORDS = {
@@ -99,118 +108,12 @@ CHANNEL_KEYWORDS = {
     "繁星計畫": ["繁星"],
 }
 
-DEPARTMENT_ALIASES = {
-    "護理": "護理系", "護理系": "護理系",
-    "醫技": "醫學檢驗生物技術系", "醫檢": "醫學檢驗生物技術系",
-    "醫學檢驗": "醫學檢驗生物技術系", "醫學檢驗生物技術系": "醫學檢驗生物技術系",
-    "藥學": "藥學系", "藥學系": "藥學系",
-    "食營": "食品營養系", "食品營養": "食品營養系", "食品營養系": "食品營養系",
-    "化妝品": "化妝品應用與管理系", "化妝品應用": "化妝品應用與管理系",
-    "職安": "職業安全衛生系", "職業安全": "職業安全衛生系",
-    "長照": "長期照顧系", "長期照顧": "長期照顧系",
-    "幼保": "幼兒保育系", "幼兒保育": "幼兒保育系",
-    "寵美": "寵物美容學位學程", "寵物美容": "寵物美容學位學程",
-    "資管": "資訊管理系", "資訊管理": "資訊管理系",
-    "醫管": "醫務暨健康事業管理系", "醫務管理": "醫務暨健康事業管理系",
-    "視光": "視光系", "視光系": "視光系",
-}
-
-# 台灣主要城市座標（作為縣市層級備用）
-TAIWAN_CITY_COORDS = {
-    "台北市": (25.0330, 121.5654), "新北市": (25.0120, 121.4650),
-    "桃園市": (24.9936, 121.3010), "台中市": (24.1477, 120.6736),
-    "台南市": (22.9998, 120.2270), "高雄市": (22.6273, 120.3014),
-    "基隆市": (25.1276, 121.7392), "新竹市": (24.8138, 120.9675),
-    "新竹縣": (24.8390, 121.0042), "苗栗縣": (24.5602, 120.8214),
-    "彰化縣": (24.0518, 120.5161), "南投縣": (23.9610, 120.6718),
-    "雲林縣": (23.7092, 120.4313), "嘉義市": (23.4801, 120.4491),
-    "嘉義縣": (23.4518, 120.2551), "屏東縣": (22.5519, 120.5487),
-    "宜蘭縣": (24.7570, 121.7533), "花蓮縣": (23.9871, 121.6016),
-    "台東縣": (22.7583, 121.1444), "澎湖縣": (23.5711, 119.5793),
-    "金門縣": (24.4493, 118.3767), "連江縣": (26.1505, 119.9499),
-    "臺北市": (25.0330, 121.5654), "臺中市": (24.1477, 120.6736),
-    "臺南市": (22.9998, 120.2270), "臺東縣": (22.7583, 121.1444),
-}
-
 HWU_COORDS = {"lat": 22.9340, "lon": 120.2756}
 
-
-def detect_channel_from_filename(filename: str) -> str | None:
-    """從檔案名稱偵測招生管道"""
-    if not filename:
-        return None
-    for channel, keywords in CHANNEL_KEYWORDS.items():
-        for kw in keywords:
-            if kw in filename:
-                return channel
-    return None
-
-
-def detect_channel_from_columns(df: pd.DataFrame) -> str | None:
-    """從資料欄位內容偵測招生管道"""
-    channel_col_candidates = ["管道", "入學管道", "招生管道", "報名管道", "升學管道"]
-    for col in channel_col_candidates:
-        if col in df.columns:
-            top_val = df[col].dropna().value_counts()
-            if not top_val.empty:
-                val = str(top_val.index[0])
-                for channel, keywords in CHANNEL_KEYWORDS.items():
-                    for kw in keywords:
-                        if kw in val:
-                            return channel
-                return val
-    return None
-
-
-def resolve_channel(auto_detected: str | None, uploaded_filename: str) -> str:
-    """整合自動偵測與使用者確認，回傳最終管道名稱"""
-    filename_channel = detect_channel_from_filename(uploaded_filename)
-    detected = auto_detected or filename_channel
-    if detected:
-        st.info(f"🔍 系統自動偵測到招生管道：**{detected}**")
-        confirm = st.radio("請確認此招生管道是否正確：", ["✅ 正確", "❌ 我要自己選"], horizontal=True, key=f"ch_confirm_{uploaded_filename}")
-        if confirm == "✅ 正確":
-            return detected
-    return st.selectbox("請選擇此資料的招生管道：", KNOWN_CHANNELS, key=f"ch_select_{uploaded_filename}")
-
-
-def normalize_school_name(name: str) -> str:
-    """標準化學校名稱"""
-    if not isinstance(name, str):
-        return str(name)
-    name = name.strip()
-    name = name.replace("臺", "台").replace("（", "(").replace("）", ")")
-    name = re.sub(r"\s+", "", name)
-    for suffix in ["附設進修學校", "進修學校", "進修部"]:
-        name = name.replace(suffix, "")
-    return name
-
-
-def detect_phase_columns(df: pd.DataFrame) -> dict:
-    """
-    偵測資料中的階段欄位。
-    回傳如 { 'phase1': '報名人數', 'phase2': '到考人數', 'final': '報到人數' }
-    """
-    mapping = {"phase1": None, "phase2": None, "final": None}
-    phase1_kw = ["報名", "登記", "一階", "第一階段", "Phase1", "phase1", "填志願", "通過"]
-    phase2_kw = ["到考", "面試", "二階", "第二階段", "Phase2", "phase2", "甄試", "考試", "複試"]
-    final_kw  = ["報到", "註冊", "錄取確認", "最終", "入學", "Final", "final", "就讀"]
-    for col in df.columns:
-        col_str = str(col)
-        for kw in phase1_kw:
-            if kw in col_str and mapping["phase1"] is None:
-                mapping["phase1"] = col
-        for kw in phase2_kw:
-            if kw in col_str and mapping["phase2"] is None:
-                mapping["phase2"] = col
-        for kw in final_kw:
-            if kw in col_str and mapping["final"] is None:
-                mapping["final"] = col
-    return mapping
-
-
-def detect_school_column(df: pd.DataFrame) -> str | None:
-    """偵測畢業學校欄位"""
+# ============================================================
+# 欄位偵測工具
+# ============================================================
+def detect_school_column(df):
     candidates = ["畢業學校", "來源學校", "原就讀學校", "高中職校名",
                   "學校名稱", "校名", "畢業高中職", "畢業學校名稱",
                   "就讀學校", "原學校"]
@@ -221,10 +124,9 @@ def detect_school_column(df: pd.DataFrame) -> str | None:
     return None
 
 
-def detect_department_column(df: pd.DataFrame) -> str | None:
-    """偵測報名科系欄位"""
+def detect_department_column(df):
     candidates = ["科系", "系所", "報名科系", "錄取科系", "志願科系",
-                  "就讀科系", "科系名稱", "系科", "學系"]
+                  "就讀科系", "科系名稱", "系科", "學系", "錄取系所"]
     for c in candidates:
         for col in df.columns:
             if c in str(col):
@@ -232,240 +134,59 @@ def detect_department_column(df: pd.DataFrame) -> str | None:
     return None
 
 
-def detect_lat_lon_columns(df: pd.DataFrame) -> tuple:
-    """偵測經緯度欄位"""
-    lat_candidates = ["緯度", "lat", "latitude", "Lat", "LAT", "Latitude"]
-    lon_candidates = ["經度", "lon", "lng", "longitude", "Lon", "LON", "Longitude"]
-    lat_col, lon_col = None, None
+def detect_lat_lon_columns(df):
+    lat_candidates = ["緯度", "lat", "latitude", "Lat", "LAT"]
+    lon_candidates = ["經度", "lon", "lng", "longitude", "Lon", "LON"]
+    lat_col = lon_col = None
     for col in df.columns:
-        col_str = str(col).strip()
+        s = str(col).strip()
         if lat_col is None:
             for kw in lat_candidates:
-                if kw in col_str:
-                    lat_col = col
-                    break
+                if kw in s:
+                    lat_col = col; break
         if lon_col is None:
             for kw in lon_candidates:
-                if kw in col_str:
-                    lon_col = col
-                    break
+                if kw in s:
+                    lon_col = col; break
     return lat_col, lon_col
 
 
-def detect_name_id_column(df: pd.DataFrame) -> str | None:
-    """偵測學生姓名或編號欄位（用於一二階串聯）"""
-    candidates = ["准考證號", "准考證", "學號", "報名序號", "編號",
-                  "考生編號", "序號", "身分證字號", "ID",
-                  "姓名", "考生姓名", "學生姓名", "name"]
-    for c in candidates:
-        for col in df.columns:
-            if c in str(col):
-                return col
+def detect_channel_from_filename(filename):
+    if not filename:
+        return None
+    for ch, kws in CHANNEL_KEYWORDS.items():
+        for kw in kws:
+            if kw in filename:
+                return ch
     return None
 
 
-# ============================================================
-# 核心：建構一階學校經緯度對照表
-# ============================================================
-def build_school_geo_lookup(phase1_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    從一階（報名）資料中，建構 畢業學校 → (緯度, 經度) 的對照表。
-    此對照表作為系統中所有畢業學校地理資訊的唯一來源。
-    """
-    school_col = detect_school_column(phase1_df)
-    lat_col, lon_col = detect_lat_lon_columns(phase1_df)
-
-    if school_col is None:
-        return pd.DataFrame(columns=["學校名稱_標準", "緯度", "經度"])
-
-    # 建構基礎 lookup
-    if lat_col and lon_col:
-        geo_df = phase1_df[[school_col, lat_col, lon_col]].copy()
-        geo_df.columns = ["學校名稱_原始", "緯度", "經度"]
-        geo_df["緯度"] = pd.to_numeric(geo_df["緯度"], errors="coerce")
-        geo_df["經度"] = pd.to_numeric(geo_df["經度"], errors="coerce")
-        geo_df = geo_df.dropna(subset=["緯度", "經度"])
-        geo_df["學校名稱_標準"] = geo_df["學校名稱_原始"].apply(normalize_school_name)
-        # 取每所學校的平均經緯度（防止同校有微小差異）
-        lookup = geo_df.groupby("學校名稱_標準").agg(
-            緯度=("緯度", "mean"),
-            經度=("經度", "mean")
-        ).reset_index()
-        return lookup
-    else:
-        # 無經緯度欄位，回傳空的但保留學校名稱
-        schools = phase1_df[school_col].dropna().unique()
-        lookup = pd.DataFrame({
-            "學校名稱_標準": [normalize_school_name(s) for s in schools],
-            "緯度": np.nan,
-            "經度": np.nan
-        })
-        return lookup.drop_duplicates(subset=["學校名稱_標準"])
+def detect_channel_from_columns(df):
+    for col in ["管道", "入學管道", "招生管道", "報名管道"]:
+        if col in df.columns:
+            top = df[col].dropna().value_counts()
+            if not top.empty:
+                val = str(top.index[0])
+                for ch, kws in CHANNEL_KEYWORDS.items():
+                    for kw in kws:
+                        if kw in val:
+                            return ch
+                return val
+    return None
 
 
-def enrich_with_geo(df: pd.DataFrame, geo_lookup: pd.DataFrame) -> pd.DataFrame:
-    """
-    將任意 DataFrame 透過畢業學校名稱，從 geo_lookup 中補上經緯度。
-    用於二階資料、合併分析資料等。
-    """
-    school_col = detect_school_column(df)
-    if school_col is None or geo_lookup.empty:
-        return df
-
-    df = df.copy()
-    df["_school_std"] = df[school_col].apply(normalize_school_name)
-
-    # 移除可能已存在的經緯度欄位（改用一階的）
-    for col in ["緯度", "經度", "lat", "lon", "latitude", "longitude"]:
-        if col in df.columns and col != school_col:
-            df = df.drop(columns=[col], errors="ignore")
-
-    # 合併
-    df = df.merge(
-        geo_lookup.rename(columns={"學校名稱_標準": "_school_std"}),
-        on="_school_std",
-        how="left"
-    )
-    df = df.drop(columns=["_school_std"], errors="ignore")
-    return df
+def normalize_school_name(name):
+    if not isinstance(name, str):
+        return str(name)
+    name = name.strip()
+    name = name.replace("臺", "台").replace("（", "(").replace("）", ")")
+    name = re.sub(r"\s+", "", name)
+    for suffix in ["附設進修學校", "進修學校", "進修部"]:
+        name = name.replace(suffix, "")
+    return name
 
 
-# ============================================================
-# 核心：統一轉換率計算（分母 = 一階人數）
-# ============================================================
-def compute_conversion_metrics(phase1_count: int, phase2_count: int = None, final_count: int = None) -> dict:
-    """
-    以一階為統一分母計算所有轉換率。
-    """
-    metrics = {
-        "phase1_count": phase1_count,
-        "phase2_count": phase2_count,
-        "final_count": final_count,
-        "p1_to_p2_rate": None,
-        "p1_to_final_rate": None,
-        "p2_to_final_rate": None,
-    }
-    if phase1_count and phase1_count > 0:
-        if phase2_count is not None:
-            metrics["p1_to_p2_rate"] = round(phase2_count / phase1_count * 100, 1)
-        if final_count is not None:
-            metrics["p1_to_final_rate"] = round(final_count / phase1_count * 100, 1)
-    if phase2_count and phase2_count > 0 and final_count is not None:
-        metrics["p2_to_final_rate"] = round(final_count / phase2_count * 100, 1)
-    return metrics
-
-
-def build_funnel_data(summary_df: pd.DataFrame, phase_cols: dict) -> pd.DataFrame:
-    """建構漏斗資料，所有轉換率以一階為分母"""
-    records = []
-    p1_col = phase_cols.get("phase1")
-    p2_col = phase_cols.get("phase2")
-    fn_col = phase_cols.get("final")
-
-    if p1_col is None:
-        return pd.DataFrame()
-
-    for _, row in summary_df.iterrows():
-        p1 = int(row.get(p1_col, 0)) if pd.notna(row.get(p1_col)) else 0
-        p2 = int(row.get(p2_col, 0)) if p2_col and pd.notna(row.get(p2_col)) else None
-        fn = int(row.get(fn_col, 0)) if fn_col and pd.notna(row.get(fn_col)) else None
-        m = compute_conversion_metrics(p1, p2, fn)
-        dept_col = detect_department_column(summary_df)
-        label = row.get(dept_col, "整體") if dept_col else "整體"
-        records.append({"項目": label, **m})
-    return pd.DataFrame(records)
-
-
-# ============================================================
-# 視覺化函式
-# ============================================================
-def create_funnel_chart(labels: list, values: list, title: str = "招生漏斗"):
-    fig = go.Figure(go.Funnel(
-        y=labels, x=values,
-        textinfo="value+percent initial",
-        marker=dict(color=["#2196F3", "#FF9800", "#4CAF50", "#E91E63"][:len(labels)]),
-        connector=dict(line=dict(color="royalblue", width=2))
-    ))
-    fig.update_layout(title=title, height=400, font=dict(size=14))
-    return fig
-
-
-def create_conversion_bar(df: pd.DataFrame, x_col: str, y_col: str, title: str, color: str = "#667eea"):
-    fig = px.bar(
-        df.sort_values(y_col, ascending=True),
-        x=y_col, y=x_col, orientation="h",
-        text=y_col, title=title
-    )
-    fig.update_traces(marker_color=color, texttemplate="%{text:.1f}%", textposition="outside")
-    fig.update_layout(height=max(350, len(df) * 30), xaxis_title="轉換率 (%)", yaxis_title="")
-    return fig
-
-
-def create_map(df: pd.DataFrame, size_col: str, title: str, color_col: str = None):
-    """建立地圖，經緯度來自 geo_lookup 合併後的欄位"""
-    if "緯度" not in df.columns or "經度" not in df.columns:
-        st.warning("⚠️ 資料中缺少經緯度欄位，無法繪製地圖。")
-        return None
-
-    map_df = df.dropna(subset=["緯度", "經度"]).copy()
-    if map_df.empty:
-        st.warning("⚠️ 無有效的經緯度資料可繪製地圖。")
-        return None
-
-    map_df[size_col] = pd.to_numeric(map_df[size_col], errors="coerce").fillna(1)
-    school_col = detect_school_column(map_df) or "學校"
-
-    fig = px.scatter_mapbox(
-        map_df, lat="緯度", lon="經度",
-        size=size_col,
-        color=color_col if color_col and color_col in map_df.columns else None,
-        hover_name=school_col if school_col in map_df.columns else None,
-        hover_data={size_col: True, "緯度": ":.4f", "經度": ":.4f"},
-        title=title,
-        size_max=30,
-        zoom=7,
-        center={"lat": HWU_COORDS["lat"], "lon": HWU_COORDS["lon"]},
-        mapbox_style="carto-positron"
-    )
-    # 加上本校標記
-    fig.add_trace(go.Scattermapbox(
-        lat=[HWU_COORDS["lat"]], lon=[HWU_COORDS["lon"]],
-        mode="markers+text",
-        marker=dict(size=18, color="red", symbol="star"),
-        text=["中華醫事科技大學"], textposition="top center",
-        name="本校位置", showlegend=True
-    ))
-    fig.update_layout(height=600, margin=dict(l=0, r=0, t=40, b=0))
-    return fig
-
-
-def create_heatmap(df: pd.DataFrame, x_col: str, y_col: str, value_col: str, title: str):
-    pivot = df.pivot_table(index=y_col, columns=x_col, values=value_col, aggfunc="sum").fillna(0)
-    fig = px.imshow(
-        pivot, text_auto=True, aspect="auto",
-        color_continuous_scale="YlOrRd", title=title
-    )
-    fig.update_layout(height=max(400, len(pivot) * 25))
-    return fig
-
-
-def create_radar(categories: list, values: list, title: str):
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=values + [values[0]],
-        theta=categories + [categories[0]],
-        fill="toself",
-        marker=dict(color="#667eea")
-    ))
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, max(values) * 1.2 if values else 5])),
-        showlegend=False, title=title, height=400
-    )
-    return fig
-
-
-def efficiency_stars(rate: float) -> str:
-    """轉換率的三星評等"""
+def efficiency_stars(rate):
     if rate >= 70:
         return "⭐⭐⭐"
     elif rate >= 40:
@@ -475,866 +196,866 @@ def efficiency_stars(rate: float) -> str:
 
 
 # ============================================================
-# 資料上傳與管理（Session State）
+# 核心：geo_lookup 建構與合併
 # ============================================================
-def init_session():
-    defaults = {
-        "datasets": {},        # {name: {"df": df, "channel": str, "phase": str, "filename": str}}
-        "geo_lookup": None,    # 從一階資料建構的學校經緯度對照表
-        "survey_data": {},     # 問卷資料
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+def build_school_geo_lookup(phase1_df):
+    """從一階資料建構 學校→經緯度 對照表"""
+    school_col = detect_school_column(phase1_df)
+    lat_col, lon_col = detect_lat_lon_columns(phase1_df)
+    if school_col is None:
+        return pd.DataFrame(columns=["學校名稱_標準", "緯度", "經度"])
+    if lat_col and lon_col:
+        geo = phase1_df[[school_col, lat_col, lon_col]].copy()
+        geo.columns = ["原始", "緯度", "經度"]
+        geo["緯度"] = pd.to_numeric(geo["緯度"], errors="coerce")
+        geo["經度"] = pd.to_numeric(geo["經度"], errors="coerce")
+        geo = geo.dropna(subset=["緯度", "經度"])
+        geo["學校名稱_標準"] = geo["原始"].apply(normalize_school_name)
+        lookup = geo.groupby("學校名稱_標準").agg(
+            緯度=("緯度", "mean"), 經度=("經度", "mean")
+        ).reset_index()
+        return lookup
+    else:
+        schools = phase1_df[school_col].dropna().unique()
+        return pd.DataFrame({
+            "學校名稱_標準": [normalize_school_name(s) for s in schools],
+            "緯度": np.nan, "經度": np.nan
+        }).drop_duplicates(subset=["學校名稱_標準"])
 
-init_session()
+
+def enrich_with_geo(df, geo_lookup):
+    """用 geo_lookup 幫 df 補經緯度"""
+    school_col = detect_school_column(df)
+    if school_col is None or geo_lookup is None or geo_lookup.empty:
+        return df
+    df = df.copy()
+    df["_std"] = df[school_col].apply(normalize_school_name)
+    for c in ["緯度", "經度", "lat", "lon", "latitude", "longitude"]:
+        if c in df.columns and c != school_col:
+            df = df.drop(columns=[c], errors="ignore")
+    df = df.merge(
+        geo_lookup.rename(columns={"學校名稱_標準": "_std"}),
+        on="_std", how="left"
+    )
+    df = df.drop(columns=["_std"], errors="ignore")
+    return df
 
 
 # ============================================================
-# Sidebar — 資料上傳
+# 三階段學校統計核心
+# ============================================================
+def build_school_stats(p1_df, p2_df=None, p3_df=None):
+    """
+    建構各學校三階段統計：
+    一階人數 / 二階人數 / 最終入學人數 / 各階段轉換率（分母=一階）
+    """
+    sc1 = detect_school_column(p1_df)
+    if sc1 is None:
+        return None
+
+    stats = p1_df[sc1].value_counts().reset_index()
+    stats.columns = ["學校", "一階人數"]
+
+    if p2_df is not None:
+        sc2 = detect_school_column(p2_df)
+        if sc2:
+            t2 = p2_df[sc2].value_counts().reset_index()
+            t2.columns = ["學校", "二階人數"]
+            stats = stats.merge(t2, on="學校", how="left")
+    if "二階人數" not in stats.columns:
+        stats["二階人數"] = np.nan
+
+    if p3_df is not None:
+        sc3 = detect_school_column(p3_df)
+        if sc3:
+            t3 = p3_df[sc3].value_counts().reset_index()
+            t3.columns = ["學校", "最終入學"]
+            stats = stats.merge(t3, on="學校", how="left")
+    if "最終入學" not in stats.columns:
+        stats["最終入學"] = np.nan
+
+    stats["二階人數"] = stats["二階人數"].fillna(0).astype(int)
+    stats["最終入學"] = stats["最終入學"].fillna(0).astype(int)
+    stats["一→二階(%)"] = (stats["二階人數"] / stats["一階人數"] * 100).round(1)
+    stats["一→最終(%)"] = (stats["最終入學"] / stats["一階人數"] * 100).round(1)
+    stats["流失人數"] = stats["一階人數"] - stats["最終入學"]
+    stats["效率評等"] = stats["一→最終(%)"].apply(efficiency_stars)
+    return stats
+
+
+def build_dept_stats(p1_df, p2_df=None, p3_df=None):
+    """建構各科系三階段統計"""
+    dc1 = detect_department_column(p1_df)
+    if dc1 is None:
+        return None
+
+    stats = p1_df[dc1].value_counts().reset_index()
+    stats.columns = ["科系", "一階人數"]
+
+    if p2_df is not None:
+        dc2 = detect_department_column(p2_df)
+        if dc2:
+            t2 = p2_df[dc2].value_counts().reset_index()
+            t2.columns = ["科系", "二階人數"]
+            stats = stats.merge(t2, on="科系", how="left")
+    if "二階人數" not in stats.columns:
+        stats["二階人數"] = np.nan
+
+    if p3_df is not None:
+        dc3 = detect_department_column(p3_df)
+        if dc3:
+            t3 = p3_df[dc3].value_counts().reset_index()
+            t3.columns = ["科系", "最終入學"]
+            stats = stats.merge(t3, on="科系", how="left")
+    if "最終入學" not in stats.columns:
+        stats["最終入學"] = np.nan
+
+    stats["二階人數"] = stats["二階人數"].fillna(0).astype(int)
+    stats["最終入學"] = stats["最終入學"].fillna(0).astype(int)
+    stats["一→二階(%)"] = (stats["二階人數"] / stats["一階人數"] * 100).round(1)
+    stats["一→最終(%)"] = (stats["最終入學"] / stats["一階人數"] * 100).round(1)
+    stats["效率評等"] = stats["一→最終(%)"].apply(efficiency_stars)
+    return stats
+
+
+# ============================================================
+# 視覺化工具
+# ============================================================
+def create_funnel_chart(labels, values, title="招生漏斗"):
+    colors = ["#2196F3", "#FF9800", "#4CAF50", "#E91E63"]
+    fig = go.Figure(go.Funnel(
+        y=labels, x=values,
+        textinfo="value+percent initial",
+        marker=dict(color=colors[:len(labels)]),
+        connector=dict(line=dict(color="royalblue", width=2))
+    ))
+    fig.update_layout(title=title, height=420, font=dict(size=14))
+    return fig
+
+
+def create_bar_h(df, y_col, x_col, title, color="#667eea", fmt=".1f"):
+    fig = px.bar(
+        df.sort_values(x_col, ascending=True),
+        x=x_col, y=y_col, orientation="h",
+        text=x_col, title=title
+    )
+    fig.update_traces(marker_color=color,
+                      texttemplate=f"%{{text:{fmt}}}%", textposition="outside")
+    fig.update_layout(height=max(380, len(df) * 28),
+                      xaxis_title="轉換率 (%)", yaxis_title="")
+    return fig
+
+
+def create_grouped_bar(df, y_col, val_cols, title):
+    fig = go.Figure()
+    colors = ["#2196F3", "#FF9800", "#4CAF50"]
+    for i, vc in enumerate(val_cols):
+        if vc in df.columns:
+            fig.add_trace(go.Bar(
+                name=vc, y=df[y_col], x=df[vc],
+                orientation="h", marker_color=colors[i % 3],
+                text=df[vc], textposition="outside"
+            ))
+    fig.update_layout(barmode="group", title=title,
+                      height=max(400, len(df) * 35),
+                      yaxis=dict(autorange="reversed"))
+    return fig
+
+
+def create_map(df, size_col, title, color_col=None):
+    if "緯度" not in df.columns or "經度" not in df.columns:
+        return None
+    mdf = df.dropna(subset=["緯度", "經度"]).copy()
+    if mdf.empty:
+        return None
+    mdf[size_col] = pd.to_numeric(mdf[size_col], errors="coerce").fillna(1)
+    school_col = detect_school_column(mdf)
+    fig = px.scatter_mapbox(
+        mdf, lat="緯度", lon="經度", size=size_col,
+        color=color_col if color_col and color_col in mdf.columns else None,
+        hover_name=school_col if school_col and school_col in mdf.columns else None,
+        hover_data={size_col: True, "緯度": ":.4f", "經度": ":.4f"},
+        title=title, size_max=30, zoom=7,
+        center={"lat": HWU_COORDS["lat"], "lon": HWU_COORDS["lon"]},
+        mapbox_style="carto-positron"
+    )
+    fig.add_trace(go.Scattermapbox(
+        lat=[HWU_COORDS["lat"]], lon=[HWU_COORDS["lon"]],
+        mode="markers+text",
+        marker=dict(size=18, color="red", symbol="star"),
+        text=["中華醫事科技大學"], textposition="top center",
+        name="本校", showlegend=True
+    ))
+    fig.update_layout(height=600, margin=dict(l=0, r=0, t=40, b=0))
+    return fig
+
+
+def create_heatmap(df, x_col, y_col, val_col, title):
+    pv = df.pivot_table(index=y_col, columns=x_col, values=val_col,
+                        aggfunc="sum").fillna(0)
+    fig = px.imshow(pv, text_auto=True, aspect="auto",
+                    color_continuous_scale="YlOrRd", title=title)
+    fig.update_layout(height=max(400, len(pv) * 25))
+    return fig
+
+
+# ============================================================
+# Session State
+# ============================================================
+if "datasets" not in st.session_state:
+    st.session_state["datasets"] = {}
+if "geo_lookup" not in st.session_state:
+    st.session_state["geo_lookup"] = None
+
+# ============================================================
+# Sidebar — 資料上傳與三階段指定
 # ============================================================
 with st.sidebar:
     st.header("📂 資料上傳")
 
-    uploaded_files = st.file_uploader(
-        "上傳招生資料 (Excel/CSV)",
-        type=["xlsx", "xls", "csv"],
+    uploaded = st.file_uploader(
+        "上傳招生資料 (Excel / CSV)", type=["xlsx", "xls", "csv"],
         accept_multiple_files=True,
-        help="支援多檔上傳，系統會自動偵測管道與階段"
+        help="可多檔上傳，再分別指定為一階/二階/最終入學資料"
     )
 
-    if uploaded_files:
-        for uf in uploaded_files:
+    if uploaded:
+        for uf in uploaded:
             if uf.name not in st.session_state["datasets"]:
                 try:
-                    if uf.name.endswith(".csv"):
-                        df = pd.read_csv(uf)
-                    else:
-                        df = pd.read_excel(uf)
-
-                    # 偵測管道
-                    auto_ch = detect_channel_from_columns(df)
-                    # 偵測階段
-                    phase_map = detect_phase_columns(df)
-
+                    df = pd.read_csv(uf) if uf.name.endswith(".csv") else pd.read_excel(uf)
+                    auto_ch = detect_channel_from_columns(df) or detect_channel_from_filename(uf.name)
                     st.session_state["datasets"][uf.name] = {
-                        "df": df,
-                        "channel": auto_ch,
-                        "phase_map": phase_map,
-                        "filename": uf.name,
+                        "df": df, "channel": auto_ch, "filename": uf.name
                     }
-                    st.success(f"✅ 已載入：{uf.name}（{len(df)} 筆）")
+                    st.success(f"✅ {uf.name}（{len(df)} 筆）")
                 except Exception as e:
-                    st.error(f"❌ 載入失敗 {uf.name}: {e}")
+                    st.error(f"❌ {uf.name}: {e}")
 
     st.markdown("---")
 
-    # 顯示已載入資料
+    # 已載入清單
     if st.session_state["datasets"]:
-        st.subheader("📋 已載入資料集")
+        st.subheader("📋 已載入資料")
         for name, info in st.session_state["datasets"].items():
-            df = info["df"]
-            ch = info.get("channel", "未偵測")
-            st.markdown(f"**{name}**")
-            st.caption(f"　{len(df)} 筆 ｜ 管道：{ch or '待確認'}")
+            st.caption(f"📄 **{name}**　{len(info['df'])} 筆　管道：{info.get('channel') or '待確認'}")
 
-        if st.button("🗑️ 清除所有資料", type="secondary"):
+        if st.button("🗑️ 清除全部資料"):
             st.session_state["datasets"] = {}
             st.session_state["geo_lookup"] = None
             st.rerun()
 
+    # 三階段指定
     st.markdown("---")
-    st.subheader("⚙️ 資料階段設定")
+    st.subheader("⚙️ 三階段資料指定")
+    st.markdown("""
+    <div style="font-size:0.8rem; color:#888; margin-bottom:10px;">
+    📍 一階資料 = 經緯度唯一來源<br>
+    📊 所有轉換率分母 = 一階人數
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 選擇一階資料（經緯度來源）
-    if st.session_state["datasets"]:
-        st.markdown('<div class="info-box">📍 <strong>一階（報名）資料</strong>是畢業學校經緯度的唯一來源。<br>二階資料中的學生將自動從一階查找對應的學校位置。</div>', unsafe_allow_html=True)
+    ds_names = list(st.session_state["datasets"].keys())
+    none_opt = ["-- 未選擇 --"]
 
-        dataset_names = list(st.session_state["datasets"].keys())
-        phase1_source = st.selectbox(
-            "🔵 請選擇【一階（報名）】資料：",
-            ["-- 請選擇 --"] + dataset_names,
-            key="phase1_select"
-        )
-        phase2_source = st.selectbox(
-            "🟠 請選擇【二階（報到確認）】資料（可選）：",
-            ["-- 無 --"] + dataset_names,
-            key="phase2_select"
-        )
+    p1_sel = st.selectbox("🔵 一階（報名）", none_opt + ds_names, key="p1_sel")
+    p2_sel = st.selectbox("🟠 二階（報到確認）", none_opt + ds_names, key="p2_sel")
+    p3_sel = st.selectbox("🟢 最終入學（註冊）", none_opt + ds_names, key="p3_sel")
 
-        # 建構 geo_lookup
-        if phase1_source != "-- 請選擇 --":
-            p1_df = st.session_state["datasets"][phase1_source]["df"]
-            geo_lookup = build_school_geo_lookup(p1_df)
-            st.session_state["geo_lookup"] = geo_lookup
-
-            if not geo_lookup.empty and geo_lookup["緯度"].notna().any():
-                st.success(f"📍 已從一階資料建立 {len(geo_lookup)} 所學校的經緯度對照表")
-            else:
-                st.warning("⚠️ 一階資料中未找到經緯度欄位，地圖功能可能受限")
-
-            # 如果有二階資料，自動補上經緯度
-            if phase2_source != "-- 無 --":
-                p2_df = st.session_state["datasets"][phase2_source]["df"]
-                p2_enriched = enrich_with_geo(p2_df, geo_lookup)
-                st.session_state["datasets"][phase2_source]["df_enriched"] = p2_enriched
-                matched = p2_enriched["緯度"].notna().sum() if "緯度" in p2_enriched.columns else 0
-                total = len(p2_enriched)
-                st.info(f"🔗 二階資料已自動對應經緯度：{matched}/{total} 筆成功匹配")
+    # 建構 geo_lookup
+    if p1_sel != "-- 未選擇 --":
+        p1_df_raw = st.session_state["datasets"][p1_sel]["df"]
+        geo_lookup = build_school_geo_lookup(p1_df_raw)
+        st.session_state["geo_lookup"] = geo_lookup
+        geo_ok = geo_lookup["緯度"].notna().sum() if not geo_lookup.empty else 0
+        if geo_ok > 0:
+            st.success(f"📍 經緯度對照表：{geo_ok} 所學校")
+        else:
+            st.warning("⚠️ 一階資料無經緯度欄位")
 
     # 管道確認
     st.markdown("---")
     st.subheader("🏷️ 管道確認")
     for name, info in st.session_state["datasets"].items():
         with st.expander(f"📄 {name}"):
-            current = info.get("channel")
-            confirmed = resolve_channel(current, name)
+            auto = info.get("channel")
+            if auto:
+                st.info(f"自動偵測：**{auto}**")
+                ok = st.radio("正確？", ["✅ 是", "❌ 自選"], horizontal=True,
+                              key=f"chk_{name}")
+                if ok == "✅ 是":
+                    confirmed = auto
+                else:
+                    confirmed = st.selectbox("選擇管道：", KNOWN_CHANNELS,
+                                             key=f"chs_{name}")
+            else:
+                confirmed = st.selectbox("選擇管道：", KNOWN_CHANNELS,
+                                         key=f"chs_{name}")
             st.session_state["datasets"][name]["channel"] = confirmed
+
+
+# ============================================================
+# 取得三階段資料的輔助函式
+# ============================================================
+def get_phase_dfs():
+    """回傳 (p1_df, p2_df, p3_df)，二階和最終入學會自動補經緯度"""
+    geo = st.session_state.get("geo_lookup")
+    p1 = p2 = p3 = None
+
+    sel1 = st.session_state.get("p1_sel", "-- 未選擇 --")
+    sel2 = st.session_state.get("p2_sel", "-- 未選擇 --")
+    sel3 = st.session_state.get("p3_sel", "-- 未選擇 --")
+
+    if sel1 != "-- 未選擇 --":
+        p1 = st.session_state["datasets"][sel1]["df"].copy()
+    if sel2 != "-- 未選擇 --":
+        raw = st.session_state["datasets"][sel2]["df"].copy()
+        p2 = enrich_with_geo(raw, geo) if geo is not None else raw
+    if sel3 != "-- 未選擇 --":
+        raw = st.session_state["datasets"][sel3]["df"].copy()
+        p3 = enrich_with_geo(raw, geo) if geo is not None else raw
+    return p1, p2, p3
 
 
 # ============================================================
 # 主功能選單
 # ============================================================
-st.markdown("---")
-
 modules = {
-    "📊 Module 0：總覽儀表板":       "mod0",
-    "🔄 Module 1：招生漏斗分析":      "mod1",
-    "📈 Module 2：管道比較分析":       "mod2",
-    "🗺️ Module 3：地理分布（地圖）":  "mod3",
-    "🏫 Module 4：科系熱力圖":        "mod4",
-    "🎯 Module 5：來源學校精準追蹤":  "mod5",
-    "⚠️ Module 6：流失預警分析":      "mod6",
-    "📋 Module 7：前瞻意向調查分析":  "mod7",
+    "📊 Module 0：總覽儀表板":      "mod0",
+    "🔄 Module 1：招生漏斗分析":     "mod1",
+    "📈 Module 2：管道比較分析":      "mod2",
+    "🗺️ Module 3：地理分布（地圖）": "mod3",
+    "🏫 Module 4：科系熱力圖":       "mod4",
+    "🎯 Module 5：來源學校追蹤":     "mod5",
+    "⚠️ Module 6：流失預警分析":     "mod6",
 }
 
-selected_module = st.selectbox("選擇分析模組：", list(modules.keys()))
-module_key = modules[selected_module]
-
+selected = st.selectbox("選擇分析模組：", list(modules.keys()))
+mod = modules[selected]
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
-
-
-# ============================================================
-# 輔助：取得合併資料
-# ============================================================
-def get_combined_data() -> pd.DataFrame | None:
-    """合併所有已載入的資料集"""
-    if not st.session_state["datasets"]:
-        st.warning("⚠️ 請先上傳招生資料。")
-        return None
-
-    frames = []
-    for name, info in st.session_state["datasets"].items():
-        df = info.get("df_enriched", info["df"]).copy()
-        df["_資料來源"] = name
-        df["_招生管道"] = info.get("channel", "未分類")
-        frames.append(df)
-
-    combined = pd.concat(frames, ignore_index=True)
-    return combined
-
-
-def get_phase_data():
-    """分別取得一階和二階資料"""
-    p1_key = st.session_state.get("phase1_select")
-    p2_key = st.session_state.get("phase2_select")
-
-    p1_df = None
-    p2_df = None
-
-    if p1_key and p1_key != "-- 請選擇 --":
-        p1_df = st.session_state["datasets"][p1_key]["df"].copy()
-
-    if p2_key and p2_key != "-- 無 --":
-        info = st.session_state["datasets"][p2_key]
-        p2_df = info.get("df_enriched", info["df"]).copy()
-
-    return p1_df, p2_df
 
 
 # ============================================================
 # Module 0：總覽儀表板
 # ============================================================
-if module_key == "mod0":
+if mod == "mod0":
     st.header("📊 Module 0：總覽儀表板")
+    p1, p2, p3 = get_phase_dfs()
 
-    p1_df, p2_df = get_phase_data()
+    if p1 is None:
+        st.warning("⚠️ 請先在側邊欄指定【一階（報名）】資料。")
+        st.stop()
 
-    if p1_df is None:
-        st.warning("⚠️ 請先在側邊欄選擇一階（報名）資料。")
-    else:
-        school_col = detect_school_column(p1_df)
-        dept_col = detect_department_column(p1_df)
+    n1 = len(p1)
+    n2 = len(p2) if p2 is not None else None
+    n3 = len(p3) if p3 is not None else None
+    school_col = detect_school_column(p1)
+    dept_col = detect_department_column(p1)
 
-        p1_count = len(p1_df)
-        p2_count = len(p2_df) if p2_df is not None else None
-        final_count = None  # 若有三階段資料可再擴充
+    # KPI
+    cols = st.columns(5)
+    with cols[0]:
+        st.markdown(f'<div class="metric-card"><h3>一階 報名</h3><h1>{n1:,}</h1></div>',
+                    unsafe_allow_html=True)
+    with cols[1]:
+        v = f"{n2:,}" if n2 else "—"
+        st.markdown(f'<div class="metric-card metric-orange"><h3>二階 報到</h3><h1>{v}</h1></div>',
+                    unsafe_allow_html=True)
+    with cols[2]:
+        v = f"{n3:,}" if n3 else "—"
+        st.markdown(f'<div class="metric-card metric-green"><h3>最終入學</h3><h1>{v}</h1></div>',
+                    unsafe_allow_html=True)
+    with cols[3]:
+        r = f"{n2/n1*100:.1f}%" if n2 and n1 else "—"
+        st.markdown(f'<div class="metric-card metric-blue"><h3>一→二階 轉換率</h3><h1>{r}</h1></div>',
+                    unsafe_allow_html=True)
+    with cols[4]:
+        r = f"{n3/n1*100:.1f}%" if n3 and n1 else "—"
+        st.markdown(f'<div class="metric-card metric-gold"><h3>一→最終 轉換率</h3><h1>{r}</h1></div>',
+                    unsafe_allow_html=True)
 
-        metrics = compute_conversion_metrics(p1_count, p2_count, final_count)
+    st.markdown("---")
 
-        # KPI 卡片
-        cols = st.columns(4)
-        with cols[0]:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>一階 報名人數</h3>
-                <h1>{p1_count:,}</h1>
-            </div>""", unsafe_allow_html=True)
-        with cols[1]:
-            p2_display = f"{p2_count:,}" if p2_count else "N/A"
-            st.markdown(f"""
-            <div class="metric-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
-                <h3>二階 報到人數</h3>
-                <h1>{p2_display}</h1>
-            </div>""", unsafe_allow_html=True)
-        with cols[2]:
-            rate_display = f'{metrics["p1_to_p2_rate"]}%' if metrics["p1_to_p2_rate"] is not None else "N/A"
-            st.markdown(f"""
-            <div class="metric-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
-                <h3>一→二階轉換率</h3>
-                <h1>{rate_display}</h1>
-            </div>""", unsafe_allow_html=True)
-        with cols[3]:
-            school_count = p1_df[school_col].nunique() if school_col else "N/A"
-            st.markdown(f"""
-            <div class="metric-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
-                <h3>來源學校數</h3>
-                <h1>{school_count}</h1>
-            </div>""", unsafe_allow_html=True)
+    # 漏斗
+    f_labels, f_values = ["一階 報名"], [n1]
+    if n2 is not None:
+        f_labels.append("二階 報到確認"); f_values.append(n2)
+    if n3 is not None:
+        f_labels.append("最終入學"); f_values.append(n3)
 
+    if len(f_values) > 1:
+        st.plotly_chart(create_funnel_chart(f_labels, f_values, "整體招生漏斗"),
+                        use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if dept_col:
+            dd = p1[dept_col].value_counts().reset_index()
+            dd.columns = ["科系", "人數"]
+            fig = px.pie(dd, names="科系", values="人數",
+                         title="一階報名 科系分布", hole=0.4)
+            st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        if school_col:
+            sd = p1[school_col].value_counts().head(10).reset_index()
+            sd.columns = ["學校", "人數"]
+            fig = px.bar(sd, x="人數", y="學校", orientation="h",
+                         title="來源學校 TOP 10", text="人數")
+            fig.update_traces(marker_color="#667eea")
+            fig.update_layout(yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig, use_container_width=True)
+
+    # 科系三階段統計
+    dstats = build_dept_stats(p1, p2, p3)
+    if dstats is not None:
         st.markdown("---")
-
-        # 漏斗圖
-        funnel_labels = ["一階 報名"]
-        funnel_values = [p1_count]
-        if p2_count is not None:
-            funnel_labels.append("二階 報到確認")
-            funnel_values.append(p2_count)
-
-        if len(funnel_values) > 1:
-            fig_funnel = create_funnel_chart(funnel_labels, funnel_values, "整體招生漏斗")
-            st.plotly_chart(fig_funnel, use_container_width=True)
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            # 科系分布
-            if dept_col and dept_col in p1_df.columns:
-                dept_dist = p1_df[dept_col].value_counts().reset_index()
-                dept_dist.columns = ["科系", "報名人數"]
-                fig_dept = px.pie(dept_dist, names="科系", values="報名人數",
-                                  title="一階報名 — 科系分布", hole=0.4)
-                st.plotly_chart(fig_dept, use_container_width=True)
-
-        with col_b:
-            # 來源學校 TOP 10
-            if school_col and school_col in p1_df.columns:
-                top_schools = p1_df[school_col].value_counts().head(10).reset_index()
-                top_schools.columns = ["學校", "人數"]
-                fig_school = px.bar(top_schools, x="人數", y="學校", orientation="h",
-                                    title="一階報名 — 來源學校 TOP 10",
-                                    text="人數")
-                fig_school.update_traces(marker_color="#667eea")
-                fig_school.update_layout(yaxis=dict(autorange="reversed"))
-                st.plotly_chart(fig_school, use_container_width=True)
+        st.subheader("各科系三階段概覽")
+        st.dataframe(dstats.sort_values("一階人數", ascending=False),
+                     use_container_width=True, hide_index=True)
 
 
 # ============================================================
 # Module 1：招生漏斗分析
 # ============================================================
-elif module_key == "mod1":
+elif mod == "mod1":
     st.header("🔄 Module 1：招生漏斗分析")
+    p1, p2, p3 = get_phase_dfs()
+    if p1 is None:
+        st.warning("⚠️ 請先指定一階資料。"); st.stop()
 
-    p1_df, p2_df = get_phase_data()
+    # --- 科系漏斗 ---
+    st.subheader("1-1. 各科系三階段漏斗")
+    dstats = build_dept_stats(p1, p2, p3)
+    if dstats is not None:
+        st.dataframe(dstats.sort_values("一→最終(%)", ascending=False),
+                     use_container_width=True, hide_index=True)
 
-    if p1_df is None:
-        st.warning("⚠️ 請先在側邊欄選擇一階（報名）資料。")
+        # 並排轉換率
+        rate_cols = [c for c in ["一→二階(%)", "一→最終(%)"] if c in dstats.columns]
+        if rate_cols:
+            fig = create_grouped_bar(
+                dstats.sort_values(rate_cols[0], ascending=True),
+                "科系", rate_cols, "各科系轉換率比較（分母=一階）"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # 單科系漏斗
+        st.subheader("1-2. 單科系漏斗圖")
+        sel = st.selectbox("選擇科系：", dstats["科系"].tolist())
+        row = dstats[dstats["科系"] == sel].iloc[0]
+        fl, fv = ["一階報名"], [int(row["一階人數"])]
+        if row["二階人數"] > 0 or p2 is not None:
+            fl.append("二階報到"); fv.append(int(row["二階人數"]))
+        if row["最終入學"] > 0 or p3 is not None:
+            fl.append("最終入學"); fv.append(int(row["最終入學"]))
+        st.plotly_chart(create_funnel_chart(fl, fv, f"{sel} 招生漏斗"),
+                        use_container_width=True)
     else:
-        dept_col = detect_department_column(p1_df)
-        school_col = detect_school_column(p1_df)
+        st.warning("⚠️ 未偵測到科系欄位。")
 
-        st.subheader("1-1. 依科系的漏斗分析")
+    # --- 學校漏斗 ---
+    st.markdown("---")
+    st.subheader("1-3. 各來源學校三階段漏斗")
+    sstats = build_school_stats(p1, p2, p3)
+    if sstats is not None:
+        mn = st.slider("一階報名 ≥", 1, 50, 5, key="m1_sch")
+        sf = sstats[sstats["一階人數"] >= mn].sort_values("一→最終(%)", ascending=False)
+        st.dataframe(sf, use_container_width=True, hide_index=True)
 
-        if dept_col and p2_df is not None:
-            dept_col_p2 = detect_department_column(p2_df)
-
-            p1_by_dept = p1_df[dept_col].value_counts().reset_index()
-            p1_by_dept.columns = ["科系", "一階人數"]
-
-            if dept_col_p2:
-                p2_by_dept = p2_df[dept_col_p2].value_counts().reset_index()
-                p2_by_dept.columns = ["科系", "二階人數"]
-                dept_summary = p1_by_dept.merge(p2_by_dept, on="科系", how="left").fillna(0)
-            else:
-                dept_summary = p1_by_dept.copy()
-                dept_summary["二階人數"] = 0
-
-            dept_summary["二階人數"] = dept_summary["二階人數"].astype(int)
-            dept_summary["轉換率(%)"] = (dept_summary["二階人數"] / dept_summary["一階人數"] * 100).round(1)
-            dept_summary["效率評等"] = dept_summary["轉換率(%)"].apply(efficiency_stars)
-
-            st.dataframe(
-                dept_summary.sort_values("轉換率(%)", ascending=False),
-                use_container_width=True, hide_index=True
-            )
-
-            fig = create_conversion_bar(dept_summary, "科系", "轉換率(%)",
-                                        "各科系 一→二階 轉換率（分母=一階報名）")
-            st.plotly_chart(fig, use_container_width=True)
-
-            # 各科系漏斗
-            st.subheader("1-2. 各科系漏斗圖")
-            sel_dept = st.selectbox("選擇科系：", dept_summary["科系"].tolist())
-            row = dept_summary[dept_summary["科系"] == sel_dept].iloc[0]
-            fig_f = create_funnel_chart(
-                ["一階報名", "二階報到"],
-                [int(row["一階人數"]), int(row["二階人數"])],
-                f"{sel_dept} 招生漏斗"
-            )
-            st.plotly_chart(fig_f, use_container_width=True)
-
-        elif dept_col:
-            st.info("ℹ️ 僅有一階資料，顯示各科系報名分布。")
-            dist = p1_df[dept_col].value_counts().reset_index()
-            dist.columns = ["科系", "報名人數"]
-            fig = px.bar(dist, x="報名人數", y="科系", orientation="h",
-                         title="各科系報名人數", text="報名人數")
-            fig.update_traces(marker_color="#667eea")
-            fig.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("⚠️ 未偵測到科系欄位。")
-
-        # 依學校的漏斗
-        st.markdown("---")
-        st.subheader("1-3. 依來源學校的漏斗分析")
-
-        if school_col and p2_df is not None:
-            school_col_p2 = detect_school_column(p2_df)
-
-            p1_by_sch = p1_df[school_col].value_counts().reset_index()
-            p1_by_sch.columns = ["學校", "一階人數"]
-
-            if school_col_p2:
-                p2_by_sch = p2_df[school_col_p2].value_counts().reset_index()
-                p2_by_sch.columns = ["學校", "二階人數"]
-                sch_summary = p1_by_sch.merge(p2_by_sch, on="學校", how="left").fillna(0)
-            else:
-                sch_summary = p1_by_sch.copy()
-                sch_summary["二階人數"] = 0
-
-            sch_summary["二階人數"] = sch_summary["二階人數"].astype(int)
-            sch_summary["轉換率(%)"] = (sch_summary["二階人數"] / sch_summary["一階人數"] * 100).round(1)
-            sch_summary["效率評等"] = sch_summary["轉換率(%)"].apply(efficiency_stars)
-
-            min_p1 = st.slider("篩選：一階報名人數 ≥", 1, 50, 5, key="sch_filter")
-            filtered = sch_summary[sch_summary["一階人數"] >= min_p1].sort_values("轉換率(%)", ascending=False)
-
-            st.dataframe(filtered, use_container_width=True, hide_index=True)
-
-            fig_sch = create_conversion_bar(filtered.head(20), "學校", "轉換率(%)",
-                                            f"來源學校轉換率 TOP 20（一階≥{min_p1}人）")
-            st.plotly_chart(fig_sch, use_container_width=True)
+        fig = create_bar_h(sf.head(20), "學校", "一→最終(%)",
+                           f"來源學校 一→最終 轉換率 TOP 20（一階≥{mn}人）",
+                           color="#4CAF50")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================
 # Module 2：管道比較分析
 # ============================================================
-elif module_key == "mod2":
+elif mod == "mod2":
     st.header("📈 Module 2：管道比較分析")
 
-    combined = get_combined_data()
-    if combined is not None:
-        channels = combined["_招生管道"].unique()
+    if not st.session_state["datasets"]:
+        st.warning("⚠️ 請先上傳資料。"); st.stop()
 
-        if len(channels) < 2:
-            st.info("ℹ️ 目前僅有一個管道的資料，上傳多個管道的資料後可進行比較分析。")
+    frames = []
+    for name, info in st.session_state["datasets"].items():
+        df = info["df"].copy()
+        df["_管道"] = info.get("channel", "未分類")
+        df["_來源"] = name
+        frames.append(df)
+    combined = pd.concat(frames, ignore_index=True)
 
-        st.subheader("2-1. 各管道報名人數概覽")
-        ch_dist = combined["_招生管道"].value_counts().reset_index()
-        ch_dist.columns = ["管道", "人數"]
+    st.subheader("2-1. 各管道人數")
+    cd = combined["_管道"].value_counts().reset_index()
+    cd.columns = ["管道", "人數"]
+    fig = px.bar(cd, x="管道", y="人數", text="人數", color="管道",
+                 title="各招生管道資料筆數")
+    st.plotly_chart(fig, use_container_width=True)
 
-        fig = px.bar(ch_dist, x="管道", y="人數", text="人數",
-                     title="各管道報名人數", color="管道")
+    dept_col = detect_department_column(combined)
+    if dept_col:
+        st.subheader("2-2. 管道 × 科系")
+        cross = combined.groupby(["_管道", dept_col]).size().reset_index(name="人數")
+        fig = px.bar(cross, x="_管道", y="人數", color=dept_col,
+                     barmode="group", title="管道 × 科系分布")
         st.plotly_chart(fig, use_container_width=True)
 
-        # 各管道科系分布
-        st.subheader("2-2. 各管道 × 科系分布")
-        dept_col = detect_department_column(combined)
-        if dept_col:
-            cross = combined.groupby(["_招生管道", dept_col]).size().reset_index(name="人數")
-            fig_cross = px.bar(cross, x="_招生管道", y="人數", color=dept_col,
-                               title="各管道科系分布", barmode="group")
-            st.plotly_chart(fig_cross, use_container_width=True)
-
-        # 各管道來源學校多元性
-        st.subheader("2-3. 各管道來源學校多元性")
-        school_col = detect_school_column(combined)
-        if school_col:
-            diversity = combined.groupby("_招生管道")[school_col].nunique().reset_index()
-            diversity.columns = ["管道", "來源學校數"]
-            fig_div = px.bar(diversity, x="管道", y="來源學校數", text="來源學校數",
-                             title="各管道來源學校多元性", color="管道")
-            st.plotly_chart(fig_div, use_container_width=True)
+    school_col = detect_school_column(combined)
+    if school_col:
+        st.subheader("2-3. 管道來源學校多元性")
+        div = combined.groupby("_管道")[school_col].nunique().reset_index()
+        div.columns = ["管道", "來源學校數"]
+        fig = px.bar(div, x="管道", y="來源學校數", text="來源學校數",
+                     color="管道", title="各管道來源學校多元性")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================
 # Module 3：地理分布（地圖）
 # ============================================================
-elif module_key == "mod3":
+elif mod == "mod3":
     st.header("🗺️ Module 3：地理分布（地圖）")
+    p1, p2, p3 = get_phase_dfs()
+    geo = st.session_state.get("geo_lookup")
 
-    p1_df, p2_df = get_phase_data()
-    geo_lookup = st.session_state.get("geo_lookup")
+    if p1 is None:
+        st.warning("⚠️ 請先指定一階資料。"); st.stop()
 
-    if p1_df is None:
-        st.warning("⚠️ 請先在側邊欄選擇一階（報名）資料。")
-    else:
-        school_col = detect_school_column(p1_df)
+    school_col = detect_school_column(p1)
+    if not school_col:
+        st.warning("⚠️ 未偵測到學校欄位。"); st.stop()
 
-        if school_col is None:
-            st.warning("⚠️ 未偵測到畢業學校欄位。")
+    def make_school_map(source_df, count_label, title_label, phase_name):
+        sc = detect_school_column(source_df)
+        if sc is None:
+            return
+        enriched = enrich_with_geo(source_df, geo) if geo is not None else source_df
+        agg = enriched.groupby(sc).size().reset_index(name=count_label)
+        if geo is not None and not geo.empty:
+            agg["_std"] = agg[sc].apply(normalize_school_name)
+            agg = agg.merge(geo.rename(columns={"學校名稱_標準": "_std"}),
+                            on="_std", how="left").drop(columns=["_std"])
+        fig = create_map(agg, count_label, title_label)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+            if "緯度" in agg.columns:
+                ok = agg["緯度"].notna().sum()
+                st.caption(f"📊 經緯度匹配：{ok}/{len(agg)} 所學校")
+                miss = agg[agg["緯度"].isna()]
+                if not miss.empty:
+                    with st.expander(f"⚠️ {phase_name}中 {len(miss)} 所學校無經緯度"):
+                        st.dataframe(miss[[sc, count_label]], hide_index=True)
         else:
-            st.subheader("3-1. 一階報名 — 來源學校地圖")
+            st.warning(f"⚠️ {phase_name}無法繪製地圖（缺經緯度）。")
 
-            # 一階資料使用自身的經緯度（因為 geo_lookup 就是從一階建的）
-            p1_enriched = enrich_with_geo(p1_df, geo_lookup) if geo_lookup is not None else p1_df
+    # 一階地圖
+    st.subheader("3-1. 一階報名 地理分布")
+    make_school_map(p1, "報名人數", "一階報名 — 來源學校地圖", "一階")
 
-            p1_school_agg = p1_enriched.groupby(school_col).agg(
-                報名人數=(school_col, "size"),
-            ).reset_index()
+    # 二階地圖
+    if p2 is not None:
+        st.markdown("---")
+        st.subheader("3-2. 二階報到 地理分布")
+        st.markdown('<div class="info-box">📍 經緯度來源：一階資料</div>', unsafe_allow_html=True)
+        make_school_map(p2, "報到人數", "二階報到 — 來源學校地圖（經緯度←一階）", "二階")
 
-            # 合併經緯度
-            if geo_lookup is not None and not geo_lookup.empty:
-                p1_school_agg["_std"] = p1_school_agg[school_col].apply(normalize_school_name)
-                p1_school_agg = p1_school_agg.merge(
-                    geo_lookup.rename(columns={"學校名稱_標準": "_std"}),
-                    on="_std", how="left"
-                ).drop(columns=["_std"])
+    # 最終入學地圖
+    if p3 is not None:
+        st.markdown("---")
+        st.subheader("3-3. 最終入學 地理分布")
+        st.markdown('<div class="info-box">📍 經緯度來源：一階資料</div>', unsafe_allow_html=True)
+        make_school_map(p3, "入學人數", "最終入學 — 來源學校地圖（經緯度←一階）", "最終入學")
 
-            fig_map = create_map(p1_school_agg, "報名人數", "一階報名 — 來源學校地理分布")
-            if fig_map:
-                st.plotly_chart(fig_map, use_container_width=True)
+    # 三階段對比地圖
+    if p2 is not None or p3 is not None:
+        st.markdown("---")
+        st.subheader("3-4. 三階段對比：各校人數變化")
+        sstats = build_school_stats(p1, p2, p3)
+        if sstats is not None and geo is not None:
+            sstats["_std"] = sstats["學校"].apply(normalize_school_name)
+            sstats = sstats.merge(
+                geo.rename(columns={"學校名稱_標準": "_std"}),
+                on="_std", how="left"
+            ).drop(columns=["_std"])
 
-            # 二階地圖（經緯度從一階查）
-            if p2_df is not None:
-                st.markdown("---")
-                st.subheader("3-2. 二階報到 — 來源學校地圖")
-                st.markdown('<div class="info-box">📍 二階資料的經緯度由一階資料自動匹配</div>', unsafe_allow_html=True)
-
-                p2_enriched = enrich_with_geo(p2_df, geo_lookup) if geo_lookup is not None else p2_df
-                school_col_p2 = detect_school_column(p2_enriched)
-
-                if school_col_p2:
-                    p2_school_agg = p2_enriched.groupby(school_col_p2).agg(
-                        報到人數=(school_col_p2, "size"),
-                    ).reset_index()
-
-                    if geo_lookup is not None and not geo_lookup.empty:
-                        p2_school_agg["_std"] = p2_school_agg[school_col_p2].apply(normalize_school_name)
-                        p2_school_agg = p2_school_agg.merge(
-                            geo_lookup.rename(columns={"學校名稱_標準": "_std"}),
-                            on="_std", how="left"
-                        ).drop(columns=["_std"])
-
-                    fig_map2 = create_map(p2_school_agg, "報到人數",
-                                          "二階報到 — 來源學校地理分布（經緯度來源：一階資料）")
-                    if fig_map2:
-                        st.plotly_chart(fig_map2, use_container_width=True)
-
-                    # 匹配統計
-                    if "緯度" in p2_school_agg.columns:
-                        matched = p2_school_agg["緯度"].notna().sum()
-                        total = len(p2_school_agg)
-                        unmatched = p2_school_agg[p2_school_agg["緯度"].isna()]
-                        st.info(f"📊 學校經緯度匹配：{matched}/{total} 所成功 ({matched/total*100:.0f}%)")
-                        if not unmatched.empty:
-                            st.warning(f"⚠️ 以下 {len(unmatched)} 所學校在一階資料中找不到經緯度：")
-                            st.dataframe(unmatched[[school_col_p2, "報到人數"]],
-                                         use_container_width=True, hide_index=True)
+            map_df = sstats.dropna(subset=["緯度", "經度"])
+            if not map_df.empty:
+                fig = px.scatter_mapbox(
+                    map_df, lat="緯度", lon="經度",
+                    size="一階人數",
+                    color="一→最終(%)",
+                    hover_name="學校",
+                    hover_data={"一階人數": True, "二階人數": True,
+                                "最終入學": True, "一→最終(%)": True},
+                    color_continuous_scale="RdYlGn",
+                    size_max=30, zoom=7,
+                    center={"lat": HWU_COORDS["lat"], "lon": HWU_COORDS["lon"]},
+                    mapbox_style="carto-positron",
+                    title="三階段對比：氣泡=一階人數，顏色=最終轉換率"
+                )
+                fig.add_trace(go.Scattermapbox(
+                    lat=[HWU_COORDS["lat"]], lon=[HWU_COORDS["lon"]],
+                    mode="markers+text",
+                    marker=dict(size=18, color="red", symbol="star"),
+                    text=["中華醫事科技大學"], textposition="top center",
+                    name="本校", showlegend=True
+                ))
+                fig.update_layout(height=600, margin=dict(l=0, r=0, t=40, b=0))
+                st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================
 # Module 4：科系熱力圖
 # ============================================================
-elif module_key == "mod4":
+elif mod == "mod4":
     st.header("🏫 Module 4：科系 × 來源學校 熱力圖")
+    p1, p2, p3 = get_phase_dfs()
+    if p1 is None:
+        st.warning("⚠️ 請先指定一階資料。"); st.stop()
 
-    p1_df, p2_df = get_phase_data()
+    dept_col = detect_department_column(p1)
+    school_col = detect_school_column(p1)
+    if not dept_col or not school_col:
+        st.warning("⚠️ 未偵測到科系或學校欄位。"); st.stop()
 
-    if p1_df is None:
-        st.warning("⚠️ 請先在側邊欄選擇一階（報名）資料。")
-    else:
-        dept_col = detect_department_column(p1_df)
-        school_col = detect_school_column(p1_df)
+    mn = st.slider("學校報名人數 ≥", 1, 30, 3, key="hm")
+    valid = p1[school_col].value_counts()
+    valid = valid[valid >= mn].index
+    filt = p1[p1[school_col].isin(valid)]
 
-        if dept_col and school_col:
-            st.subheader("4-1. 一階報名熱力圖")
+    st.subheader("4-1. 一階報名 人數熱力圖")
+    cr = filt.groupby([school_col, dept_col]).size().reset_index(name="人數")
+    st.plotly_chart(create_heatmap(cr, dept_col, school_col, "人數",
+                    f"科系×學校 報名人數（≥{mn}人）"), use_container_width=True)
 
-            min_count = st.slider("篩選：學校報名人數 ≥", 1, 30, 3, key="hm_filter")
-            school_counts = p1_df[school_col].value_counts()
-            valid_schools = school_counts[school_counts >= min_count].index
+    # 最終入學熱力圖
+    if p3 is not None:
+        st.subheader("4-2. 最終入學 人數熱力圖")
+        dc3 = detect_department_column(p3)
+        sc3 = detect_school_column(p3)
+        if dc3 and sc3:
+            cr3 = p3.groupby([sc3, dc3]).size().reset_index(name="入學人數")
+            cr3 = cr3[cr3[sc3].isin(valid)]
+            st.plotly_chart(create_heatmap(cr3, dc3, sc3, "入學人數",
+                            "科系×學校 最終入學人數"), use_container_width=True)
 
-            filtered = p1_df[p1_df[school_col].isin(valid_schools)]
-            cross = filtered.groupby([school_col, dept_col]).size().reset_index(name="人數")
-
-            fig_hm = create_heatmap(cross, dept_col, school_col, "人數",
-                                    f"科系 × 來源學校 熱力圖（學校報名≥{min_count}人）")
-            st.plotly_chart(fig_hm, use_container_width=True)
-
-            # 轉換率熱力圖（如有二階）
-            if p2_df is not None:
-                st.subheader("4-2. 轉換率熱力圖")
-                dept_col_p2 = detect_department_column(p2_df)
-                school_col_p2 = detect_school_column(p2_df)
-
-                if dept_col_p2 and school_col_p2:
-                    p1_cross = p1_df.groupby([school_col, dept_col]).size().reset_index(name="一階")
-                    p2_cross = p2_df.groupby([school_col_p2, dept_col_p2]).size().reset_index(name="二階")
-                    p2_cross.columns = [school_col, dept_col, "二階"]
-
-                    rate_cross = p1_cross.merge(p2_cross, on=[school_col, dept_col], how="left").fillna(0)
-                    rate_cross["轉換率"] = (rate_cross["二階"] / rate_cross["一階"] * 100).round(1)
-                    rate_cross = rate_cross[rate_cross[school_col].isin(valid_schools)]
-
-                    fig_hm2 = create_heatmap(rate_cross, dept_col, school_col, "轉換率",
-                                             "一→二階 轉換率 熱力圖 (%)")
-                    st.plotly_chart(fig_hm2, use_container_width=True)
-        else:
-            st.warning("⚠️ 未偵測到科系或學校欄位。")
+    # 轉換率熱力圖
+    if p3 is not None:
+        st.subheader("4-3. 一→最終 轉換率 熱力圖")
+        dc3 = detect_department_column(p3)
+        sc3 = detect_school_column(p3)
+        if dc3 and sc3:
+            p1c = p1.groupby([school_col, dept_col]).size().reset_index(name="一階")
+            p3c = p3.groupby([sc3, dc3]).size().reset_index(name="最終")
+            p3c.columns = [school_col, dept_col, "最終"]
+            rc = p1c.merge(p3c, on=[school_col, dept_col], how="left").fillna(0)
+            rc["轉換率"] = (rc["最終"] / rc["一階"] * 100).round(1)
+            rc = rc[rc[school_col].isin(valid)]
+            st.plotly_chart(create_heatmap(rc, dept_col, school_col, "轉換率",
+                            "一→最終 轉換率 (%)"), use_container_width=True)
+    elif p2 is not None:
+        st.subheader("4-2. 一→二階 轉換率 熱力圖")
+        dc2 = detect_department_column(p2)
+        sc2 = detect_school_column(p2)
+        if dc2 and sc2:
+            p1c = p1.groupby([school_col, dept_col]).size().reset_index(name="一階")
+            p2c = p2.groupby([sc2, dc2]).size().reset_index(name="二階")
+            p2c.columns = [school_col, dept_col, "二階"]
+            rc = p1c.merge(p2c, on=[school_col, dept_col], how="left").fillna(0)
+            rc["轉換率"] = (rc["二階"] / rc["一階"] * 100).round(1)
+            rc = rc[rc[school_col].isin(valid)]
+            st.plotly_chart(create_heatmap(rc, dept_col, school_col, "轉換率",
+                            "一→二階 轉換率 (%)"), use_container_width=True)
 
 
 # ============================================================
-# Module 5：來源學校精準追蹤
+# Module 5：來源學校追蹤
 # ============================================================
-elif module_key == "mod5":
+elif mod == "mod5":
     st.header("🎯 Module 5：來源學校精準追蹤")
+    p1, p2, p3 = get_phase_dfs()
+    if p1 is None:
+        st.warning("⚠️ 請先指定一階資料。"); st.stop()
 
-    p1_df, p2_df = get_phase_data()
+    sstats = build_school_stats(p1, p2, p3)
+    if sstats is None:
+        st.warning("⚠️ 未偵測到學校欄位。"); st.stop()
 
-    if p1_df is None:
-        st.warning("⚠️ 請先在側邊欄選擇一階（報名）資料。")
-    else:
-        school_col = detect_school_column(p1_df)
-        if school_col is None:
-            st.warning("⚠️ 未偵測到畢業學校欄位。")
-        else:
-            # 學校層級統計
-            p1_by_sch = p1_df[school_col].value_counts().reset_index()
-            p1_by_sch.columns = ["學校", "一階人數"]
+    # Tier 分級
+    def tier(n):
+        if n >= 30: return "Tier 1 (≥30人)"
+        elif n >= 10: return "Tier 2 (10-29人)"
+        else: return "Tier 3 (<10人)"
 
-            if p2_df is not None:
-                school_col_p2 = detect_school_column(p2_df)
-                if school_col_p2:
-                    p2_by_sch = p2_df[school_col_p2].value_counts().reset_index()
-                    p2_by_sch.columns = ["學校", "二階人數"]
-                    sch_stats = p1_by_sch.merge(p2_by_sch, on="學校", how="left").fillna(0)
-                    sch_stats["二階人數"] = sch_stats["二階人數"].astype(int)
-                else:
-                    sch_stats = p1_by_sch.copy()
-                    sch_stats["二階人數"] = 0
-            else:
-                sch_stats = p1_by_sch.copy()
-                sch_stats["二階人數"] = 0
+    sstats["經營分級"] = sstats["一階人數"].apply(tier)
 
-            sch_stats["轉換率(%)"] = (sch_stats["二階人數"] / sch_stats["一階人數"] * 100).round(1)
-            sch_stats["流失人數"] = sch_stats["一階人數"] - sch_stats["二階人數"]
-            sch_stats["效率評等"] = sch_stats["轉換率(%)"].apply(efficiency_stars)
+    st.subheader("5-1. 學校總覽")
+    sel_tiers = st.multiselect(
+        "篩選分級：",
+        ["Tier 1 (≥30人)", "Tier 2 (10-29人)", "Tier 3 (<10人)"],
+        default=["Tier 1 (≥30人)", "Tier 2 (10-29人)"]
+    )
+    disp = sstats[sstats["經營分級"].isin(sel_tiers)].sort_values("一階人數", ascending=False)
+    st.dataframe(disp, use_container_width=True, hide_index=True)
 
-            # Tier 分級
-            def assign_tier(count):
-                if count >= 30:
-                    return "⭐⭐⭐ Tier 1"
-                elif count >= 10:
-                    return "⭐⭐ Tier 2"
-                else:
-                    return "⭐ Tier 3"
+    # Tier 彙總
+    st.subheader("5-2. 分級彙總")
+    ts = sstats.groupby("經營分級").agg(
+        學校數=("學校", "count"),
+        一階合計=("一階人數", "sum"),
+        二階合計=("二階人數", "sum"),
+        最終合計=("最終入學", "sum"),
+        平均最終轉換率=("一→最終(%)", "mean")
+    ).round(1).reset_index()
+    st.dataframe(ts, use_container_width=True, hide_index=True)
 
-            sch_stats["經營分級"] = sch_stats["一階人數"].apply(assign_tier)
+    # 個別學校
+    st.subheader("5-3. 個別學校分析")
+    sel = st.selectbox("選擇學校：", sstats.sort_values("一階人數", ascending=False)["學校"])
+    if sel:
+        r = sstats[sstats["學校"] == sel].iloc[0]
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("一階", f'{int(r["一階人數"])}人')
+        c2.metric("二階", f'{int(r["二階人數"])}人')
+        c3.metric("最終入學", f'{int(r["最終入學"])}人')
+        c4.metric("一→最終", f'{r["一→最終(%)"]}%')
+        c5.metric("經營分級", r["經營分級"])
 
-            # 顯示
-            st.subheader("5-1. 來源學校總覽")
-            tier_filter = st.multiselect(
-                "篩選經營分級：",
-                ["⭐⭐⭐ Tier 1", "⭐⭐ Tier 2", "⭐ Tier 3"],
-                default=["⭐⭐⭐ Tier 1", "⭐⭐ Tier 2"],
-                key="tier_filter"
-            )
-            display_df = sch_stats[sch_stats["經營分級"].isin(tier_filter)].sort_values("一階人數", ascending=False)
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+        fl = ["一階報名"]; fv = [int(r["一階人數"])]
+        if r["二階人數"] > 0 or p2 is not None:
+            fl.append("二階報到"); fv.append(int(r["二階人數"]))
+        if r["最終入學"] > 0 or p3 is not None:
+            fl.append("最終入學"); fv.append(int(r["最終入學"]))
+        if len(fv) > 1:
+            st.plotly_chart(create_funnel_chart(fl, fv, f"{sel} 招生漏斗"),
+                            use_container_width=True)
 
-            # Tier 統計
-            st.subheader("5-2. 各分級統計")
-            tier_summary = sch_stats.groupby("經營分級").agg(
-                學校數=("學校", "count"),
-                總一階人數=("一階人數", "sum"),
-                總二階人數=("二階人數", "sum"),
-                平均轉換率=("轉換率(%)", "mean")
-            ).round(1).reset_index()
-            st.dataframe(tier_summary, use_container_width=True, hide_index=True)
-
-            # 個別學校深入
-            st.subheader("5-3. 個別學校深入分析")
-            sel_school = st.selectbox("選擇學校：", sch_stats.sort_values("一階人數", ascending=False)["學校"].tolist())
-
-            if sel_school:
-                row = sch_stats[sch_stats["學校"] == sel_school].iloc[0]
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("一階報名", f'{int(row["一階人數"])} 人')
-                c2.metric("二階報到", f'{int(row["二階人數"])} 人')
-                c3.metric("轉換率", f'{row["轉換率(%)"]}%')
-                c4.metric("經營分級", row["經營分級"])
-
-                # 該校報名科系分布
-                dept_col = detect_department_column(p1_df)
-                if dept_col:
-                    sch_dept = p1_df[p1_df[school_col] == sel_school][dept_col].value_counts().reset_index()
-                    sch_dept.columns = ["科系", "報名人數"]
-                    fig = px.pie(sch_dept, names="科系", values="報名人數",
-                                 title=f"{sel_school} — 報名科系分布")
-                    st.plotly_chart(fig, use_container_width=True)
+        # 報名科系
+        dept_col = detect_department_column(p1)
+        school_col = detect_school_column(p1)
+        if dept_col and school_col:
+            dd = p1[p1[school_col] == sel][dept_col].value_counts().reset_index()
+            dd.columns = ["科系", "人數"]
+            fig = px.pie(dd, names="科系", values="人數",
+                         title=f"{sel} — 報名科系分布", hole=0.35)
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================
 # Module 6：流失預警分析
 # ============================================================
-elif module_key == "mod6":
+elif mod == "mod6":
     st.header("⚠️ Module 6：流失預警分析")
+    p1, p2, p3 = get_phase_dfs()
 
-    p1_df, p2_df = get_phase_data()
+    if p1 is None:
+        st.warning("⚠️ 請先指定一階資料。"); st.stop()
+    if p2 is None and p3 is None:
+        st.warning("⚠️ 此模組需要至少一個後續階段（二階或最終入學）的資料。"); st.stop()
 
-    if p1_df is None or p2_df is None:
-        st.warning("⚠️ 此模組需要同時上傳一階（報名）和二階（報到確認）資料。")
+    sstats = build_school_stats(p1, p2, p3)
+    if sstats is None:
+        st.warning("⚠️ 未偵測到學校欄位。"); st.stop()
+
+    # 判斷使用哪個階段做為最終比較
+    has_final = p3 is not None
+    rate_col = "一→最終(%)" if has_final else "一→二階(%)"
+    loss_label = "最終入學" if has_final else "二階人數"
+    stage_label = "一→最終" if has_final else "一→二階"
+
+    sstats["流失人數"] = sstats["一階人數"] - sstats[loss_label]
+
+    st.subheader("6-1. 高報名低轉換 預警學校")
+    mn = st.slider("一階報名 ≥", 1, 50, 10, key="m6")
+    pool = sstats[sstats["一階人數"] >= mn]
+    avg = pool[rate_col].mean()
+
+    warn = pool[pool[rate_col] < avg].sort_values("流失人數", ascending=False)
+
+    if warn.empty:
+        st.success("✅ 沒有預警學校！")
     else:
-        school_col = detect_school_column(p1_df)
-        school_col_p2 = detect_school_column(p2_df)
+        st.markdown(f'<div class="warning-box">⚠️ 以下學校一階≥{mn}人，但 {stage_label} 轉換率低於平均 ({avg:.1f}%)</div>', unsafe_allow_html=True)
+        st.dataframe(warn, use_container_width=True, hide_index=True)
 
-        if school_col and school_col_p2:
-            # 建構流失分析資料
-            p1_by_sch = p1_df[school_col].value_counts().reset_index()
-            p1_by_sch.columns = ["學校", "一階人數"]
+    # IPA
+    st.subheader("6-2. IPA 四象限矩陣")
+    st.markdown(f"**X軸**：一階報名人數　**Y軸**：{stage_label} 轉換率")
 
-            p2_by_sch = p2_df[school_col_p2].value_counts().reset_index()
-            p2_by_sch.columns = ["學校", "二階人數"]
+    ana = sstats[sstats["一階人數"] >= mn].copy()
+    med_x = ana["一階人數"].median()
+    med_y = ana[rate_col].median()
 
-            loss_df = p1_by_sch.merge(p2_by_sch, on="學校", how="left").fillna(0)
-            loss_df["二階人數"] = loss_df["二階人數"].astype(int)
-            loss_df["轉換率(%)"] = (loss_df["二階人數"] / loss_df["一階人數"] * 100).round(1)
-            loss_df["流失人數"] = loss_df["一階人數"] - loss_df["二階人數"]
-            loss_df["流失率(%)"] = (100 - loss_df["轉換率(%)"]).round(1)
+    fig = px.scatter(
+        ana, x="一階人數", y=rate_col,
+        size="流失人數", hover_name="學校",
+        hover_data={"一階人數": True, "二階人數": True,
+                    "最終入學": True, rate_col: True},
+        title=f"IPA 矩陣（氣泡=流失人數，基準={stage_label}）",
+        size_max=40, color=rate_col,
+        color_continuous_scale="RdYlGn"
+    )
+    fig.add_hline(y=med_y, line_dash="dash", line_color="red",
+                  annotation_text=f"轉換率中位數 {med_y:.1f}%")
+    fig.add_vline(x=med_x, line_dash="dash", line_color="blue",
+                  annotation_text=f"報名中位數 {med_x:.0f}人")
 
-            # 6-1. 高流失學校預警
-            st.subheader("6-1. 高報名低轉換預警學校")
+    # 象限標注
+    x_max = ana["一階人數"].max()
+    y_max = ana[rate_col].max()
+    y_min = ana[rate_col].min()
+    x_min = ana["一階人數"].min()
+    fig.add_annotation(x=x_max*0.85, y=y_max*0.95,
+                       text="🌟 高量能高效率<br>持續維護", showarrow=False,
+                       font=dict(size=11, color="green"))
+    fig.add_annotation(x=x_max*0.85, y=y_min+(y_max-y_min)*0.05,
+                       text="⚠️ 高量能低效率<br>重點改善", showarrow=False,
+                       font=dict(size=11, color="red"))
+    fig.add_annotation(x=x_min+(x_max-x_min)*0.05, y=y_max*0.95,
+                       text="📈 低量能高效率<br>擴大招生", showarrow=False,
+                       font=dict(size=11, color="blue"))
+    fig.add_annotation(x=x_min+(x_max-x_min)*0.05, y=y_min+(y_max-y_min)*0.05,
+                       text="🔍 低量能低效率<br>評估投入", showarrow=False,
+                       font=dict(size=11, color="gray"))
+    fig.update_layout(height=600)
+    st.plotly_chart(fig, use_container_width=True)
 
-            min_reg = st.slider("篩選：一階報名 ≥", 1, 50, 10, key="loss_filter")
-            avg_rate = loss_df[loss_df["一階人數"] >= min_reg]["轉換率(%)"].mean()
+    # 流失排行
+    st.subheader("6-3. 流失人數排行 TOP 15")
+    top15 = sstats.sort_values("流失人數", ascending=False).head(15)
+    fig = px.bar(
+        top15, x="流失人數", y="學校", orientation="h",
+        text="流失人數", color=rate_col,
+        color_continuous_scale="RdYlGn",
+        title=f"流失人數排行（{stage_label}）"
+    )
+    fig.update_layout(yaxis=dict(autorange="reversed"), height=500)
+    st.plotly_chart(fig, use_container_width=True)
 
-            warning_schools = loss_df[
-                (loss_df["一階人數"] >= min_reg) &
-                (loss_df["轉換率(%)"] < avg_rate)
-            ].sort_values("流失人數", ascending=False)
+    # 科系維度流失
+    st.markdown("---")
+    st.subheader("6-4. 科系維度流失分析")
+    dstats = build_dept_stats(p1, p2, p3)
+    if dstats is not None:
+        d_rate_col = "一→最終(%)" if has_final else "一→二階(%)"
+        d_loss_label = "最終入學" if has_final else "二階人數"
+        dstats["流失人數"] = dstats["一階人數"] - dstats[d_loss_label]
 
-            if not warning_schools.empty:
-                st.markdown(f'<div class="warning-box">⚠️ 以下學校一階報名≥{min_reg}人，但轉換率低於平均 ({avg_rate:.1f}%)，建議重點關注</div>', unsafe_allow_html=True)
-                st.dataframe(warning_schools, use_container_width=True, hide_index=True)
-
-                # IPA 四象限分析
-                st.subheader("6-2. IPA 矩陣分析")
-                st.markdown("**X軸**：一階報名人數（量能）　**Y軸**：轉換率（效率）")
-
-                analysis_df = loss_df[loss_df["一階人數"] >= min_reg].copy()
-                median_x = analysis_df["一階人數"].median()
-                median_y = analysis_df["轉換率(%)"].median()
-
-                fig_ipa = px.scatter(
-                    analysis_df, x="一階人數", y="轉換率(%)",
-                    size="流失人數", hover_name="學校",
-                    title="來源學校 IPA 矩陣（氣泡大小 = 流失人數）",
-                    size_max=40
-                )
-                fig_ipa.add_hline(y=median_y, line_dash="dash", line_color="red",
-                                  annotation_text=f"轉換率中位數 {median_y:.1f}%")
-                fig_ipa.add_vline(x=median_x, line_dash="dash", line_color="blue",
-                                  annotation_text=f"報名中位數 {median_x:.0f}人")
-
-                # 象限標注
-                fig_ipa.add_annotation(x=analysis_df["一階人數"].max()*0.9, y=analysis_df["轉換率(%)"].max()*0.95,
-                                       text="🌟 高量能高效率<br>持續維護", showarrow=False,
-                                       font=dict(size=11, color="green"))
-                fig_ipa.add_annotation(x=analysis_df["一階人數"].max()*0.9, y=analysis_df["轉換率(%)"].min()*1.1,
-                                       text="⚠️ 高量能低效率<br>重點改善", showarrow=False,
-                                       font=dict(size=11, color="red"))
-                fig_ipa.add_annotation(x=analysis_df["一階人數"].min()*1.1, y=analysis_df["轉換率(%)"].max()*0.95,
-                                       text="📈 低量能高效率<br>擴大招生", showarrow=False,
-                                       font=dict(size=11, color="blue"))
-                fig_ipa.add_annotation(x=analysis_df["一階人數"].min()*1.1, y=analysis_df["轉換率(%)"].min()*1.1,
-                                       text="🔍 低量能低效率<br>評估投入", showarrow=False,
-                                       font=dict(size=11, color="gray"))
-
-                fig_ipa.update_layout(height=600)
-                st.plotly_chart(fig_ipa, use_container_width=True)
-
-                # 流失人數排行
-                st.subheader("6-3. 流失人數排行 TOP 15")
-                top_loss = loss_df.sort_values("流失人數", ascending=False).head(15)
-                fig_loss = px.bar(
-                    top_loss, x="流失人數", y="學校", orientation="h",
-                    text="流失人數", title="流失人數排行",
-                    color="轉換率(%)", color_continuous_scale="RdYlGn"
-                )
-                fig_loss.update_layout(yaxis=dict(autorange="reversed"), height=500)
-                st.plotly_chart(fig_loss, use_container_width=True)
-            else:
-                st.success("✅ 目前沒有符合預警條件的學校。")
-        else:
-            st.warning("⚠️ 未偵測到畢業學校欄位。")
-
-
-# ============================================================
-# Module 7：前瞻意向調查分析
-# ============================================================
-elif module_key == "mod7":
-    st.header("📋 Module 7：前瞻意向調查分析")
-
-    st.markdown("""
-    <div class="info-box">
-    📌 <strong>本模組分析高二（問卷A）及高三（問卷B）的升學意向調查結果。</strong><br>
-    各次施測為獨立分析，以群體趨勢取代個人追蹤。<br>
-    支援 SurveyCake / Google Forms 匯出的 Excel 或 CSV 格式。
-    </div>
-    """, unsafe_allow_html=True)
-
-    survey_tab1, survey_tab2, survey_tab3 = st.tabs(["📤 資料上傳", "📊 問卷A分析", "📊 問卷B分析"])
-
-    with survey_tab1:
-        st.subheader("上傳意向調查資料")
-
-        survey_type = st.radio("問卷類型：", ["問卷A（高二探索意向）", "問卷B（高三選校決策）"], horizontal=True)
-
-        survey_file = st.file_uploader(
-            "上傳問卷結果 (Excel/CSV)",
-            type=["xlsx", "xls", "csv"],
-            key="survey_upload"
+        fig = px.scatter(
+            dstats, x="一階人數", y=d_rate_col,
+            size="流失人數", hover_name="科系",
+            text="科系", title=f"科系 IPA（{stage_label}）",
+            size_max=50, color=d_rate_col,
+            color_continuous_scale="RdYlGn"
         )
+        fig.update_traces(textposition="top center")
+        fig.add_hline(y=dstats[d_rate_col].median(), line_dash="dash", line_color="red")
+        fig.add_vline(x=dstats["一階人數"].median(), line_dash="dash", line_color="blue")
+        fig.update_layout(height=500)
+        st.plotly_chart(fig, use_container_width=True)
 
-        if survey_file:
-            try:
-                if survey_file.name.endswith(".csv"):
-                    survey_df = pd.read_csv(survey_file)
-                else:
-                    survey_df = pd.read_excel(survey_file)
-
-                stype = "A" if "問卷A" in survey_type else "B"
-                academic_year = st.text_input("學年度（如：113）", "113")
-                key_name = f"{stype}_{academic_year}"
-
-                st.session_state["survey_data"][key_name] = survey_df
-                st.success(f"✅ 已載入 {survey_type}（{academic_year}學年度）：{len(survey_df)} 筆回覆")
-                st.dataframe(survey_df.head(), use_container_width=True)
-            except Exception as e:
-                st.error(f"❌ 載入失敗：{e}")
-
-        # 顯示已載入問卷
-        if st.session_state["survey_data"]:
-            st.markdown("---")
-            st.subheader("已載入的調查資料")
-            for k, v in st.session_state["survey_data"].items():
-                stype, yr = k.split("_")
-                label = "問卷A（高二）" if stype == "A" else "問卷B（高三）"
-                st.markdown(f"- **{label} {yr}學年度**：{len(v)} 筆")
-
-    with survey_tab2:
-        st.subheader("📊 問卷A 分析（高二探索意向）")
-
-        # 找出所有問卷A的資料
-        a_data = {k: v for k, v in st.session_state["survey_data"].items() if k.startswith("A_")}
-
-        if not a_data:
-            st.info("ℹ️ 尚未上傳問卷A資料。請在「資料上傳」頁籤中上傳。")
-        else:
-            sel_a = st.selectbox("選擇分析的資料：", list(a_data.keys()),
-                                 format_func=lambda x: f"問卷A — {x.split('_')[1]}學年度")
-            df_a = a_data[sel_a]
-
-            st.markdown("---")
-            st.markdown("#### 以下為通用分析框架，將根據實際欄位名稱自動適配")
-
-            # 自動尋找可能的欄位
-            cols_a = df_a.columns.tolist()
-            st.caption(f"偵測到的欄位：{', '.join(cols_a[:20])}{'...' if len(cols_a)>20 else ''}")
-
-            # 嘗試分析：各欄位的值分布
-            analysis_cols = st.multiselect(
-                "選擇要分析的欄位：", cols_a,
-                default=cols_a[:5] if len(cols_a) >= 5 else cols_a
-            )
-
-            for col in analysis_cols:
-                st.markdown(f"##### 📌 {col}")
-                val_counts = df_a[col].dropna().astype(str).value_counts()
-
-                if len(val_counts) <= 15:
-                    fig = px.pie(values=val_counts.values, names=val_counts.index,
-                                 title=f"{col} — 回覆分布")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    fig = px.bar(x=val_counts.index[:20], y=val_counts.values[:20],
-                                 title=f"{col} — 回覆分布 (TOP 20)")
-                    st.plotly_chart(fig, use_container_width=True)
-
-    with survey_tab3:
-        st.subheader("📊 問卷B 分析（高三選校決策）")
-
-        b_data = {k: v for k, v in st.session_state["survey_data"].items() if k.startswith("B_")}
-
-        if not b_data:
-            st.info("ℹ️ 尚未上傳問卷B資料。請在「資料上傳」頁籤中上傳。")
-        else:
-            sel_b = st.selectbox("選擇分析的資料：", list(b_data.keys()),
-                                 format_func=lambda x: f"問卷B — {x.split('_')[1]}學年度")
-            df_b = b_data[sel_b]
-
-            st.markdown("---")
-            cols_b = df_b.columns.tolist()
-            st.caption(f"偵測到的欄位：{', '.join(cols_b[:20])}{'...' if len(cols_b)>20 else ''}")
-
-            analysis_cols_b = st.multiselect(
-                "選擇要分析的欄位：", cols_b,
-                default=cols_b[:5] if len(cols_b) >= 5 else cols_b,
-                key="b_cols"
-            )
-
-            for col in analysis_cols_b:
-                st.markdown(f"##### 📌 {col}")
-                val_counts = df_b[col].dropna().astype(str).value_counts()
-
-                if len(val_counts) <= 15:
-                    fig = px.pie(values=val_counts.values, names=val_counts.index,
-                                 title=f"{col} — 回覆分布")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    fig = px.bar(x=val_counts.index[:20], y=val_counts.values[:20],
-                                 title=f"{col} — 回覆分布 (TOP 20)")
-                    st.plotly_chart(fig, use_container_width=True)
-
-            # 本校考量分析（嘗試自動找欄位）
-            st.markdown("---")
-            st.subheader("🎯 本校定位分析")
-            hwu_col_candidates = ["中華醫事", "本校考量", "考慮學校", "B11"]
-            hwu_col = None
-            for c in hwu_col_candidates:
-                for col in cols_b:
-                    if c in str(col):
-                        hwu_col = col
-                        break
-
-            if hwu_col:
-                hwu_dist = df_b[hwu_col].dropna().value_counts()
-                fig_hwu = px.pie(values=hwu_dist.values, names=hwu_dist.index,
-                                 title="本校在學生考量中的定位", hole=0.4,
-                                 color_discrete_sequence=px.colors.qualitative.Set2)
-                st.plotly_chart(fig_hwu, use_container_width=True)
-            else:
-                st.info("ℹ️ 未自動偵測到本校考量相關欄位，請在上方手動選擇分析。")
+        st.dataframe(dstats.sort_values("流失人數", ascending=False),
+                     use_container_width=True, hide_index=True)
 
 
 # ============================================================
@@ -1343,8 +1064,9 @@ elif module_key == "mod7":
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 st.markdown("""
 <div style="text-align: center; color: #aaa; font-size: 0.85rem; padding: 10px;">
-    🎓 中華醫事科技大學 招生數據分析系統 v5.0<br>
-    📍 二階資料經緯度統一由一階資料提供 ｜ 📊 轉換率統一以一階為分母<br>
+    🎓 中華醫事科技大學 招生數據分析系統 v5.1<br>
+    三階段分析：一階報名 → 二階報到 → 最終入學 ｜ 轉換率統一以一階為分母<br>
+    📍 二階＋最終入學的經緯度統一由一階資料提供<br>
     Built with Streamlit + Plotly ｜ © 2024 HWU Admissions Office
 </div>
 """, unsafe_allow_html=True)
