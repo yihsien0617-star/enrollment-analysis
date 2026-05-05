@@ -1510,4 +1510,97 @@ def render_cross_year():
     sdf = pd.DataFrame(summaries)
 
     st.subheader("年度總覽")
-    st.data
+    st.dataframe(sdf, use_container_width=True, hide_index=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["一階人數"],
+                         name="一階", marker_color="#2196F3"))
+    if sdf["二階人數"].sum() > 0:
+        fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["二階人數"],
+                             name="二階", marker_color="#FF9800"))
+    if sdf["最終入學"].sum() > 0:
+        fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["最終入學"],
+                             name="最終入學", marker_color="#4CAF50"))
+    fig.update_layout(barmode="group", title="各年度招生量", height=450)
+    st.plotly_chart(fig, use_container_width=True)
+
+    fig = go.Figure()
+    if sdf["一→最終(%)"].sum() > 0:
+        fig.add_trace(go.Scatter(
+            x=sdf["年度"], y=sdf["一→最終(%)"], name="一→最終",
+            mode="lines+markers+text", text=sdf["一→最終(%)"],
+            textposition="top center",
+            line=dict(width=3, color="#4CAF50"), marker=dict(size=12)))
+    fig.update_layout(title="轉換率趨勢", yaxis_title="轉換率(%)", height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 科系跨年度
+    st.markdown("---")
+    st.subheader("科系跨年度比較")
+    all_depts = set()
+    dept_data = {}
+    for yr in valid_years:
+        p1, p2, p3, _, _ = get_year_dfs(yr)
+        if p1 is None:
+            continue
+        result = build_dept_stats(p1, p2, p3)
+        if result is not None:
+            ds, _ = result
+            ds["_key"] = ds["科系"].apply(norm_dept)
+            dept_data[yr] = ds
+            all_depts.update(ds["科系"].tolist())
+    if dept_data and all_depts:
+        sel_dept = st.selectbox("選擇科系：", sorted(all_depts), key="cross_dept")
+        sel_key = norm_dept(sel_dept)
+        rows = []
+        for yr, ds in dept_data.items():
+            r = ds[ds["_key"] == sel_key]
+            if not r.empty:
+                r = r.iloc[0]
+                rows.append({
+                    "年度": yr, "一階": int(r["一階人數"]),
+                    "二階": int(r["二階人數"]), "最終": int(r["最終入學"]),
+                    "一→最終(%)": r["一→最終(%)"]
+                })
+        if rows:
+            rdf = pd.DataFrame(rows)
+            st.dataframe(rdf, use_container_width=True, hide_index=True)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["一階"],
+                                 name="一階", marker_color="#2196F3"))
+            fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["最終"],
+                                 name="最終", marker_color="#4CAF50"))
+            fig.update_layout(barmode="group",
+                              title=f"「{sel_dept}」跨年度趨勢", height=450)
+            st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================
+# 主畫面
+# ============================================================
+tab_names = valid_years + (["📊 跨年度比較"] if len(valid_years) >= 2 else [])
+tabs = st.tabs(tab_names)
+
+for i, yr in enumerate(valid_years):
+    with tabs[i]:
+        st.markdown(f'<span class="year-tag">📅 {yr}</span>',
+                    unsafe_allow_html=True)
+        render_year_analysis(yr)
+
+if len(valid_years) >= 2:
+    with tabs[-1]:
+        render_cross_year()
+
+# ============================================================
+# Footer
+# ============================================================
+st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+ver = st.session_state.get("analysis_version", 0)
+st.markdown(
+    '<div style="text-align:center;color:#aaa;font-size:.85rem;padding:10px;">'
+    '🎓 中華醫事科技大學 招生數據分析系統 v6.3<br>'
+    '班級結構化解析 ｜ P1科系優先映射 ｜ 跨階段名稱對齊<br>'
+    '分析版本 #' + str(ver) +
+    '</div>',
+    unsafe_allow_html=True
+)
