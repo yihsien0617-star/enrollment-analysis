@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-中華醫事科技大學 招生數據分析系統 v6.5
-- 修正：「四寵護一A」等縮寫班級名稱映射遺漏
-- 新增：ABBREV 縮寫展開引擎（寵護→寵物照護、食營→食品營養...）
+中華醫事科技大學 招生數據分析系統 v6.6
+- 新增：二階→最終入學 轉換率全模組分析
+- 修正：「四寵護一A」等縮寫班級名稱映射遺漏（v6.5 ABBREV 引擎）
+- 新增：三段轉換率完整追蹤（一→二、二→最終、一→最終）
 - 新增：跨年度七模組完整分析
-- 修正：班級名稱結構化解析（學制+科系+年級+班別）
-- 修正：P1科系優先映射引擎
 """
 
 import streamlit as st
@@ -49,6 +48,8 @@ st.markdown("""
     .metric-orange{background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);}
     .metric-blue{background:linear-gradient(135deg,#4facfe 0%,#00f2fe 100%);color:#1a1a2e;}
     .metric-gold{background:linear-gradient(135deg,#f6d365 0%,#fda085 100%);color:#1a1a2e;}
+    .metric-purple{background:linear-gradient(135deg,#a18cd1 0%,#fbc2eb 100%);color:#1a1a2e;}
+    .metric-teal{background:linear-gradient(135deg,#2af598 0%,#009efd 100%);color:#1a1a2e;}
     .section-divider{
         height:3px;background:linear-gradient(90deg,#667eea,#764ba2,#f093fb);
         border:none;border-radius:2px;margin:25px 0;
@@ -72,7 +73,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">🎓 中華醫事科技大學 招生數據分析系統</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Enrollment Analytics v6.5 ｜ 縮寫展開引擎 ｜ 跨年度七模組分析</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Enrollment Analytics v6.6 ｜ 三段轉換率完整追蹤 ｜ 縮寫展開引擎 ｜ 跨年度七模組</div>', unsafe_allow_html=True)
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
 # ============================================================
@@ -84,38 +85,25 @@ FINAL_CH_CANDIDATES = [
 ]
 HWU = {"lat": 22.9340, "lon": 120.2756}
 
-# ── 縮寫展開字典（班級名稱常見縮寫 → 完整科系關鍵字）──
 ABBREV_EXPAND = {
     "寵護": "寵物照護與美容",
     "寵美": "寵物美容",
     "寵經": "寵物經營",
     "食營": "食品營養",
     "環安": "環境與安全衛生工程",
-    "環衛": "環境與安全衛生工程",
     "職安": "職業安全衛生",
-    "資管": "資訊管理",
-    "多媒": "多媒體設計",
     "幼保": "幼兒保育",
     "運休": "運動健康與休閒",
     "餐旅": "餐旅管理",
-    "觀光": "觀光休閒事業管理",
-    "觀休": "觀光休閒事業管理",
-    "妝管": "化妝品應用與管理",
-    "美妝": "化妝品應用與管理",
-    "化妝": "化妝品應用與管理",
     "調保": "調理保健技術",
     "調理": "調理保健技術",
     "語治": "語言治療",
-    "牙技": "牙體技術",
-    "生科": "生物科技",
     "醫技": "醫學檢驗生物技術",
     "醫檢": "醫學檢驗生物技術",
     "醫管": "醫務暨健康事務管理",
-    "健管": "醫務暨健康事務管理",
     "製藥": "製藥工程",
     "長照": "長期照護",
     "護理": "護理",
-    "藥學": "藥學",
     "視光": "視光",
 }
 
@@ -123,14 +111,12 @@ DEPT_ALIAS = {
     "護理": "護理系",
     "醫技": "醫學檢驗生物技術系", "醫檢": "醫學檢驗生物技術系",
     "醫學檢驗": "醫學檢驗生物技術系", "醫學檢驗生物技術": "醫學檢驗生物技術系",
-    "藥學": "藥學系", "視光": "視光系",
     "製藥": "製藥工程系", "製藥工程": "製藥工程系",
     "食營": "食品營養系", "食品營養": "食品營養系",
     "職安": "職業安全衛生系", "職業安全衛生": "職業安全衛生系",
     "環安": "環境與安全衛生工程系", "環衛": "環境與安全衛生工程系",
     "環境與安全衛生工程": "環境與安全衛生工程系",
     "資管": "資訊管理系", "資訊管理": "資訊管理系",
-    "多媒體": "多媒體設計系", "多媒體設計": "多媒體設計系", "多媒": "多媒體設計系",
     "幼保": "幼兒保育系", "幼兒保育": "幼兒保育系",
     "運休": "運動健康與休閒系", "運動休閒": "運動健康與休閒系",
     "運動健康與休閒": "運動健康與休閒系",
@@ -156,7 +142,7 @@ DEPT_ALIAS = {
 }
 
 # ============================================================
-# 班級名稱結構化解析器（v6.5 增強版）
+# 班級名稱結構化解析器
 # ============================================================
 CLASS_PATTERN = re.compile(
     r'^(二技|四技|二|四)?'
@@ -173,10 +159,8 @@ CLASS_PATTERN_SIMPLE = re.compile(
 
 
 def expand_abbrev(dept_kw):
-    """展開班級名稱中的科系縮寫"""
     if dept_kw in ABBREV_EXPAND:
         return ABBREV_EXPAND[dept_kw]
-    # 嘗試兩字元首碼
     if len(dept_kw) >= 2 and dept_kw[:2] in ABBREV_EXPAND:
         return ABBREV_EXPAND[dept_kw[:2]]
     return dept_kw
@@ -200,7 +184,6 @@ def parse_class_name(class_name):
             program = "四技"
         else:
             program = "五專"
-        # ★ v6.5: 縮寫展開
         dept_kw = expand_abbrev(dept_kw_raw)
         return (program, dept_kw, grade, section, dept_kw_raw)
     m2 = CLASS_PATTERN_SIMPLE.match(s)
@@ -218,32 +201,27 @@ def parse_class_name(class_name):
     return None
 
 
+def norm_dept(name):
+    if not isinstance(name, str):
+        return str(name).strip()
+    name = re.sub(r"\s+", "", name.strip())
+    name = name.replace("臺", "台").replace("（", "(").replace("）", ")").replace("　", "")
+    return name
+
+
 def resolve_dept_from_keyword(dept_kw, p1_depts=None, dept_kw_raw=None):
-    """
-    解析科系關鍵字 → 科系全名
-    優先順序：
-      1. 用展開後的 dept_kw 直接匹配 P1 科系
-      2. 用原始 dept_kw_raw 查 DEPT_ALIAS
-      3. 用展開後 dept_kw 查 DEPT_ALIAS
-      4. 模糊匹配
-    """
     kw = dept_kw.strip()
     raw = (dept_kw_raw or kw).strip()
-
     if p1_depts:
         p1_cores = {}
         for d in p1_depts:
             core = re.sub(r'(學位學程|學程|系|科)$', '', norm_dept(d))
             p1_cores[core] = d
-        # 直接匹配展開後
         if kw in p1_cores:
             return p1_cores[kw]
-        # 包含匹配（雙向）
         for core, dept in sorted(p1_cores.items(), key=lambda x: len(x[0]), reverse=True):
             if len(kw) >= 2 and (kw in core or core in kw):
                 return dept
-
-    # 查 DEPT_ALIAS（先查原始縮寫，再查展開後）
     for try_kw in [raw, kw]:
         if try_kw in DEPT_ALIAS:
             alias_result = DEPT_ALIAS[try_kw]
@@ -254,21 +232,16 @@ def resolve_dept_from_keyword(dept_kw, p1_depts=None, dept_kw_raw=None):
                     if alias_core == d_core or alias_core in d_core or d_core in alias_core:
                         return d
             return alias_result
-
-    # 模糊：前兩字元
     if p1_depts and len(kw) >= 2:
         short = kw[:2]
         for d in p1_depts:
             if short in d:
                 return d
-
-    # 最後嘗試原始縮寫的前兩字元
     if p1_depts and len(raw) >= 2 and raw != kw:
         short = raw[:2]
         for d in p1_depts:
             if short in d:
                 return d
-
     return None
 
 
@@ -319,14 +292,6 @@ def norm_school(name):
     name = name.replace("臺", "台").replace("（", "(").replace("）", ")")
     for sfx in ["附設進修學校", "進修學校", "進修部"]:
         name = name.replace(sfx, "")
-    return name
-
-
-def norm_dept(name):
-    if not isinstance(name, str):
-        return str(name).strip()
-    name = re.sub(r"\s+", "", name.strip())
-    name = name.replace("臺", "台").replace("（", "(").replace("）", ")").replace("　", "")
     return name
 
 
@@ -407,6 +372,13 @@ def eff_stars(r):
         return "⭐"
 
 
+def safe_pct(num, den):
+    """安全計算百分比"""
+    if den and den > 0:
+        return round(num / den * 100, 1)
+    return 0.0
+
+
 def trend_arrow(current, previous):
     if previous == 0:
         return "—"
@@ -421,7 +393,7 @@ def trend_arrow(current, previous):
 
 
 # ============================================================
-# 統計構建
+# 統計構建（v6.6：新增二→最終轉換率）
 # ============================================================
 def get_dept_series(df, p1_depts=None):
     dc = detect_dept_col(df)
@@ -501,13 +473,16 @@ def build_dept_stats(p1, p2=None, p3=None):
     s["二階人數"] = s["二階人數"].fillna(0).astype(int)
     s["最終入學"] = s["最終入學"].fillna(0).astype(int)
     s["一→二階(%)"] = np.where(s["一階人數"] > 0, (s["二階人數"] / s["一階人數"] * 100).round(1), 0)
+    s["二→最終(%)"] = np.where(s["二階人數"] > 0, (s["最終入學"] / s["二階人數"] * 100).round(1), 0)
     s["一→最終(%)"] = np.where(s["一階人數"] > 0, (s["最終入學"] / s["一階人數"] * 100).round(1), 0)
     s["流失人數"] = s["一階人數"] - s["最終入學"]
+    s["二階流失"] = s["二階人數"] - s["最終入學"]
     s["效率評等"] = s["一→最終(%)"].apply(eff_stars)
     s["科系"] = s["_dept_std"].map(name_map).fillna(s["_dept_std"])
     s = s.drop(columns=["_dept_std"])
     col_order = ["科系", "一階人數", "二階人數", "最終入學",
-                 "一→二階(%)", "一→最終(%)", "流失人數", "效率評等"]
+                 "一→二階(%)", "二→最終(%)", "一→最終(%)",
+                 "流失人數", "二階流失", "效率評等"]
     s = s[[c for c in col_order if c in s.columns]]
     return s, p3_info
 
@@ -546,14 +521,17 @@ def build_school_stats(p1, p2=None, p3=None):
     s["二階人數"] = s["二階人數"].fillna(0).astype(int)
     s["最終入學"] = s["最終入學"].fillna(0).astype(int)
     s["一→二階(%)"] = np.where(s["一階人數"] > 0, (s["二階人數"] / s["一階人數"] * 100).round(1), 0)
+    s["二→最終(%)"] = np.where(s["二階人數"] > 0, (s["最終入學"] / s["二階人數"] * 100).round(1), 0)
     s["一→最終(%)"] = np.where(s["一階人數"] > 0, (s["最終入學"] / s["一階人數"] * 100).round(1), 0)
     s["流失人數"] = s["一階人數"] - s["最終入學"]
+    s["二階流失"] = s["二階人數"] - s["最終入學"]
     s["效率評等"] = s["一→最終(%)"].apply(eff_stars)
     name_map = tmp1.drop_duplicates("_sch_std").set_index("_sch_std")[sc1]
     s["學校"] = s["_sch_std"].map(name_map).fillna(s["_sch_std"])
     s = s.drop(columns=["_sch_std"])
     col_order = ["學校", "一階人數", "二階人數", "最終入學",
-                 "一→二階(%)", "一→最終(%)", "流失人數", "效率評等"]
+                 "一→二階(%)", "二→最終(%)", "一→最終(%)",
+                 "流失人數", "二階流失", "效率評等"]
     s = s[[c for c in col_order if c in s.columns]]
     return s
 
@@ -584,12 +562,12 @@ def fig_bar_h(df, y, x, title, color="#667eea"):
 
 def fig_grouped_bar(df, y, vals, title):
     fig = go.Figure()
-    colors = ["#2196F3", "#FF9800", "#4CAF50"]
+    colors = ["#2196F3", "#9C27B0", "#4CAF50", "#FF9800"]
     for i, v in enumerate(vals):
         if v in df.columns:
             fig.add_trace(go.Bar(
                 name=v, y=df[y], x=df[v], orientation="h",
-                marker_color=colors[i % 3], text=df[v], textposition="outside"
+                marker_color=colors[i % len(colors)], text=df[v], textposition="outside"
             ))
     fig.update_layout(barmode="group", title=title,
                       height=max(400, len(df) * 35),
@@ -729,7 +707,7 @@ with st.sidebar:
                     st.markdown(
                         f'<div class="mapping-box">'
                         f'📋 偵測到班級欄位：「{cc3}」<br>'
-                        f'v6.5 解析：[學制][科系縮寫→展開][年級][班別]</div>',
+                        f'v6.6 解析：[學制][科系縮寫→展開][年級][班別]</div>',
                         unsafe_allow_html=True)
                     sample = p3df[cc3].value_counts().head(10)
                     for cn, cnt in sample.items():
@@ -914,6 +892,40 @@ def show_field_diagnosis(p1, p2, p3, yr_label):
 
 
 # ============================================================
+# 三段轉換率圖表工具（v6.6 新增）
+# ============================================================
+def fig_three_rates_bar(df, y_col, title):
+    """科系/學校的三段轉換率 grouped bar"""
+    rate_cols = []
+    for c in ["一→二階(%)", "二→最終(%)", "一→最終(%)"]:
+        if c in df.columns:
+            rate_cols.append(c)
+    if not rate_cols:
+        return None
+    return fig_grouped_bar(df.sort_values(rate_cols[-1], ascending=True), y_col, rate_cols, title)
+
+
+def fig_three_rates_trend(sdf, title):
+    """跨年度三段轉換率折線圖"""
+    fig = go.Figure()
+    rate_info = [
+        ("一→二階(%)", "#2196F3", "一→二階"),
+        ("二→最終(%)", "#9C27B0", "二→最終"),
+        ("一→最終(%)", "#4CAF50", "一→最終"),
+    ]
+    for col, color, label in rate_info:
+        if col in sdf.columns and sdf[col].sum() > 0:
+            fig.add_trace(go.Scatter(
+                x=sdf["年度"], y=sdf[col], name=label,
+                mode="lines+markers+text", text=sdf[col],
+                textposition="top center",
+                line=dict(width=3, color=color), marker=dict(size=10)
+            ))
+    fig.update_layout(title=title, yaxis_title="轉換率(%)", height=420)
+    return fig
+
+
+# ============================================================
 # 單年度七模組
 # ============================================================
 def render_year_analysis(yr):
@@ -932,7 +944,7 @@ def render_year_analysis(yr):
     # ─── 1. 總覽 ───
     if "總覽" in mod:
         st.subheader(f"📊 {yr} — 總覽儀表板")
-        cols = st.columns(5)
+        cols = st.columns(6)
         with cols[0]:
             st.markdown(f'<div class="metric-card"><h3>一階報名</h3><h1>{n1:,}</h1></div>', unsafe_allow_html=True)
         with cols[1]:
@@ -945,8 +957,24 @@ def render_year_analysis(yr):
             r = f"{n2/n1*100:.1f}%" if n2 and n1 else "—"
             st.markdown(f'<div class="metric-card metric-blue"><h3>一→二階</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
         with cols[4]:
+            r = f"{n3/n2*100:.1f}%" if n3 and n2 else "—"
+            st.markdown(f'<div class="metric-card metric-purple"><h3>二→最終</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
+        with cols[5]:
             r = f"{n3/n1*100:.1f}%" if n3 and n1 else "—"
             st.markdown(f'<div class="metric-card metric-gold"><h3>一→最終</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
+
+        # 三段轉換率說明
+        if n2 and n3:
+            loss_12 = n1 - n2
+            loss_23 = n2 - n3
+            loss_total = n1 - n3
+            st.markdown(
+                f'<div class="info-box">'
+                f'📊 <b>三段流失分析</b><br>'
+                f'一→二階流失：<b>{loss_12}</b> 人（{loss_12/n1*100:.1f}%）｜'
+                f'二→最終流失：<b>{loss_23}</b> 人（{loss_23/n2*100:.1f}%）｜'
+                f'總流失：<b>{loss_total}</b> 人（{loss_total/n1*100:.1f}%）'
+                f'</div>', unsafe_allow_html=True)
 
         if p3 is not None and "科系" in p3.columns:
             n_mapped = p3["科系"].notna().sum()
@@ -1000,7 +1028,7 @@ def render_year_analysis(yr):
         if result is not None:
             ds, p3_info = result
             st.markdown("---")
-            st.subheader("各科系三階段概覽")
+            st.subheader("各科系三階段概覽（含三段轉換率）")
             total_final_table = ds["最終入學"].sum()
             if n3 and total_final_table != n3:
                 diff = n3 - total_final_table
@@ -1022,30 +1050,100 @@ def render_year_analysis(yr):
                         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             st.dataframe(ds.sort_values("一階人數", ascending=False), use_container_width=True, hide_index=True)
 
+            # 三段轉換率 grouped bar
+            rate_fig = fig_three_rates_bar(ds, "科系", f"{yr} 各科系三段轉換率")
+            if rate_fig:
+                st.plotly_chart(rate_fig, use_container_width=True)
+
     # ─── 2. 漏斗 ───
     elif "漏斗" in mod:
-        st.subheader(f"🔄 {yr} — 招生漏斗分析")
+        st.subheader(f"🔄 {yr} — 招生漏斗分析（三段轉換率）")
         result = build_dept_stats(p1, p2, p3)
         if result is not None:
             ds, _ = result
             st.dataframe(ds.sort_values("一→最終(%)", ascending=False), use_container_width=True, hide_index=True)
-            rc = [c for c in ["一→二階(%)", "一→最終(%)"] if c in ds.columns]
-            if rc:
-                st.plotly_chart(fig_grouped_bar(ds.sort_values(rc[0], ascending=True), "科系", rc, "各科系轉換率"), use_container_width=True)
+
+            # 三段轉換率
+            rate_fig = fig_three_rates_bar(ds, "科系", "各科系三段轉換率比較")
+            if rate_fig:
+                st.plotly_chart(rate_fig, use_container_width=True)
+
+            # 二→最終 專題分析
+            if "二→最終(%)" in ds.columns and ds["二→最終(%)"].sum() > 0:
+                st.markdown("---")
+                st.subheader("🟣 二→最終 轉換率分析")
+                st.markdown(
+                    '<div class="info-box">'
+                    '📌 <b>二→最終轉換率</b>反映已報到學生的最終註冊情況，'
+                    '是衡量「報到後流失」的核心指標。低轉換率表示學生在報到後仍選擇放棄。'
+                    '</div>', unsafe_allow_html=True)
+                ds_p2 = ds[ds["二階人數"] > 0].copy()
+                if not ds_p2.empty:
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        fig = px.bar(ds_p2.sort_values("二→最終(%)", ascending=True),
+                                     x="二→最終(%)", y="科系", orientation="h",
+                                     text="二→最終(%)", title="二→最終 轉換率排行",
+                                     color="二→最終(%)", color_continuous_scale="RdYlGn")
+                        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+                        fig.update_layout(height=max(380, len(ds_p2)*28))
+                        st.plotly_chart(fig, use_container_width=True)
+                    with c2:
+                        fig = px.bar(ds_p2.sort_values("二階流失", ascending=False),
+                                     x="二階流失", y="科系", orientation="h",
+                                     text="二階流失", title="二階報到後流失人數",
+                                     color="二階流失", color_continuous_scale="OrRd")
+                        fig.update_traces(textposition="outside")
+                        fig.update_layout(height=max(380, len(ds_p2)*28))
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    # 氣泡圖
+                    fig = px.scatter(ds_p2, x="二階人數", y="二→最終(%)",
+                                     size="二階流失", hover_name="科系", text="科系",
+                                     title="二→最終 氣泡圖（氣泡大小 = 二階流失人數）",
+                                     size_max=50, color="二→最終(%)", color_continuous_scale="RdYlGn")
+                    fig.update_traces(textposition="top center")
+                    avg = ds_p2["二→最終(%)"].mean()
+                    fig.add_hline(y=avg, line_dash="dash", line_color="red",
+                                  annotation_text=f"平均 {avg:.1f}%")
+                    fig.update_layout(height=500)
+                    st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("---")
             st.subheader("單科系漏斗")
             sel = st.selectbox("選擇科系：", ds["科系"].tolist(), key=f"fun_dept_{yr}")
             row = ds[ds["科系"] == sel].iloc[0]
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("一階", f'{int(row["一階人數"])}')
+            c2.metric("二階", f'{int(row["二階人數"])}')
+            c3.metric("最終", f'{int(row["最終入學"])}')
+            c4.metric("一→二階", f'{row["一→二階(%)"]:.1f}%')
+            c5.metric("二→最終", f'{row["二→最終(%)"]:.1f}%')
+            c6.metric("一→最終", f'{row["一→最終(%)"]:.1f}%')
             fl, fv = ["一階報名"], [int(row["一階人數"])]
             if row["二階人數"] > 0 or p2 is not None: fl.append("二階報到"); fv.append(int(row["二階人數"]))
             if row["最終入學"] > 0 or p3 is not None: fl.append("最終入學"); fv.append(int(row["最終入學"]))
             st.plotly_chart(fig_funnel(fl, fv, f"{sel} 漏斗"), use_container_width=True)
+
         ss = build_school_stats(p1, p2, p3)
         if ss is not None:
-            st.markdown("---"); st.subheader("各來源學校漏斗")
+            st.markdown("---"); st.subheader("各來源學校漏斗（含三段轉換率）")
             mn = st.slider("一階≥", 1, 50, 5, key=f"fun_mn_{yr}")
             sf = ss[ss["一階人數"] >= mn].sort_values("一→最終(%)", ascending=False)
             st.dataframe(sf, use_container_width=True, hide_index=True)
-            st.plotly_chart(fig_bar_h(sf.head(20), "學校", "一→最終(%)", f"來源學校轉換率 TOP 20（一階≥{mn}）", color="#4CAF50"), use_container_width=True)
+
+            rate_fig = fig_three_rates_bar(sf.head(20), "學校", f"來源學校三段轉換率 TOP 20（一階≥{mn}）")
+            if rate_fig:
+                st.plotly_chart(rate_fig, use_container_width=True)
+
+            # 二→最終 學校分析
+            if "二→最終(%)" in sf.columns and sf["二→最終(%)"].sum() > 0:
+                st.markdown("---")
+                st.subheader("🟣 來源學校 二→最終 轉換率")
+                sf_p2 = sf[sf["二階人數"] > 0]
+                if not sf_p2.empty:
+                    st.plotly_chart(fig_bar_h(sf_p2.head(20), "學校", "二→最終(%)",
+                        f"來源學校 二→最終(%) TOP 20", color="#9C27B0"), use_container_width=True)
 
     # ─── 3. 管道 ───
     elif "管道" in mod:
@@ -1060,7 +1158,8 @@ def render_year_analysis(yr):
             fig = px.pie(cd, names="入學管道", values="人數", title="管道佔比", hole=.35)
             st.plotly_chart(fig, use_container_width=True)
         with c2:
-            fig = px.bar(cd.sort_values("人數", ascending=True), x="人數", y="入學管道", orientation="h", text="人數", title="人數排行", color="佔比(%)", color_continuous_scale="Viridis")
+            fig = px.bar(cd.sort_values("人數", ascending=True), x="人數", y="入學管道", orientation="h",
+                         text="人數", title="人數排行", color="佔比(%)", color_continuous_scale="Viridis")
             fig.update_layout(height=max(400, len(cd)*30))
             st.plotly_chart(fig, use_container_width=True)
         st.dataframe(cd, use_container_width=True, hide_index=True)
@@ -1070,7 +1169,8 @@ def render_year_analysis(yr):
             st.markdown("---"); st.subheader("管道 × 科系")
             valid_p3 = p3[p3[dept_col].notna()] if dept_col == "科系" else p3
             cross = valid_p3.groupby([ch_col, dept_col]).size().reset_index(name="人數")
-            fig = px.bar(cross, x=ch_col, y="人數", color=dept_col, barmode="stack", text="人數", title="管道×科系堆疊圖")
+            fig = px.bar(cross, x=ch_col, y="人數", color=dept_col, barmode="stack",
+                         text="人數", title="管道×科系堆疊圖")
             fig.update_layout(height=600, xaxis_tickangle=-45)
             st.plotly_chart(fig, use_container_width=True)
             st.plotly_chart(fig_heatmap(cross, dept_col, ch_col, "人數", "管道×科系熱力圖"), use_container_width=True)
@@ -1120,7 +1220,7 @@ def render_year_analysis(yr):
 
     # ─── 6. 來源學校 ───
     elif "來源學校" in mod:
-        st.subheader(f"🎯 {yr} — 來源學校追蹤")
+        st.subheader(f"🎯 {yr} — 來源學校追蹤（含三段轉換率）")
         ss = build_school_stats(p1, p2, p3)
         if ss is None: st.warning("⚠️ 未偵測到學校欄位。"); return
         def tier(n):
@@ -1132,13 +1232,18 @@ def render_year_analysis(yr):
                                 default=["Tier1(≥30)", "Tier2(10-29)"], key=f"tier_{yr}")
         disp = ss[ss["分級"].isin(sel_t)].sort_values("一階人數", ascending=False)
         st.dataframe(disp, use_container_width=True, hide_index=True)
+
         st.subheader("個別學校")
         sel = st.selectbox("選擇學校：", ss.sort_values("一階人數", ascending=False)["學校"], key=f"sch_{yr}")
         if sel:
             r = ss[ss["學校"] == sel].iloc[0]
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("一階", f'{int(r["一階人數"])}'); c2.metric("二階", f'{int(r["二階人數"])}')
-            c3.metric("最終", f'{int(r["最終入學"])}'); c4.metric("轉換率", f'{r["一→最終(%)"]}%')
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("一階", f'{int(r["一階人數"])}')
+            c2.metric("二階", f'{int(r["二階人數"])}')
+            c3.metric("最終", f'{int(r["最終入學"])}')
+            c4.metric("一→二階", f'{r["一→二階(%)"]:.1f}%')
+            c5.metric("二→最終", f'{r["二→最終(%)"]:.1f}%')
+            c6.metric("一→最終", f'{r["一→最終(%)"]:.1f}%')
             fl, fv = ["一階"], [int(r["一階人數"])]
             if r["二階人數"] > 0 or p2 is not None: fl.append("二階"); fv.append(int(r["二階人數"]))
             if r["最終入學"] > 0 or p3 is not None: fl.append("最終"); fv.append(int(r["最終入學"]))
@@ -1146,43 +1251,91 @@ def render_year_analysis(yr):
 
     # ─── 7. 流失預警 ───
     elif "流失" in mod:
-        st.subheader(f"⚠️ {yr} — 流失預警分析")
+        st.subheader(f"⚠️ {yr} — 流失預警分析（三段轉換率）")
         if p2 is None and p3 is None: st.warning("⚠️ 需要至少二階或最終入學資料。"); return
         ss = build_school_stats(p1, p2, p3)
         if ss is None: st.warning("⚠️ 未偵測到學校欄位。"); return
-        has_final = p3 is not None and ss["最終入學"].sum() > 0
-        rc = "一→最終(%)" if has_final else "一→二階(%)"
-        ll = "最終入學" if has_final else "二階人數"
-        ss["流失人數"] = ss["一階人數"] - ss[ll]
+
+        # 全校三段流失概覽
+        if n2 and n3:
+            st.markdown("#### 全校三段流失概覽")
+            loss_data = {
+                "階段": ["一→二階", "二→最終", "一→最終（總計）"],
+                "起始人數": [n1, n2, n1],
+                "終點人數": [n2, n3, n3],
+                "流失人數": [n1-n2, n2-n3, n1-n3],
+                "轉換率(%)": [
+                    round(n2/n1*100, 1),
+                    round(n3/n2*100, 1),
+                    round(n3/n1*100, 1)
+                ],
+                "流失率(%)": [
+                    round((n1-n2)/n1*100, 1),
+                    round((n2-n3)/n2*100, 1),
+                    round((n1-n3)/n1*100, 1)
+                ]
+            }
+            st.dataframe(pd.DataFrame(loss_data), use_container_width=True, hide_index=True)
+
+        # 選擇分析維度
+        rate_select = st.radio("分析維度：", ["一→最終(%)", "一→二階(%)", "二→最終(%)"],
+                               horizontal=True, key=f"loss_rate_{yr}")
+
         mn = st.slider("一階≥", 1, 50, 10, key=f"loss_mn_{yr}")
-        pool = ss[ss["一階人數"] >= mn]
-        avg = pool[rc].mean()
-        warn = pool[pool[rc] < avg].sort_values("流失人數", ascending=False)
+        pool = ss[ss["一階人數"] >= mn].copy()
+
+        if rate_select == "二→最終(%)":
+            pool = pool[pool["二階人數"] > 0]
+            loss_col = "二階流失"
+        else:
+            loss_col = "流失人數"
+
+        avg = pool[rate_select].mean()
+        warn = pool[pool[rate_select] < avg].sort_values(loss_col, ascending=False)
         if warn.empty:
             st.success("✅ 沒有預警學校！")
         else:
-            st.markdown(f'<div class="warning-box">⚠️ {len(warn)}所學校低於平均 {avg:.1f}%</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="warning-box">⚠️ {len(warn)} 所學校的 {rate_select} 低於平均 {avg:.1f}%</div>', unsafe_allow_html=True)
             st.dataframe(warn, use_container_width=True, hide_index=True)
-        st.subheader("IPA 矩陣")
-        ana = pool.copy()
-        if not ana.empty:
-            med_x = ana["一階人數"].median(); med_y = ana[rc].median()
-            fig = px.scatter(ana, x="一階人數", y=rc, size="流失人數", hover_name="學校",
-                             title=f"IPA 矩陣", size_max=40, color=rc, color_continuous_scale="RdYlGn")
-            fig.add_hline(y=med_y, line_dash="dash", line_color="red", annotation_text=f"中位數 {med_y:.1f}%")
-            fig.add_vline(x=med_x, line_dash="dash", line_color="blue", annotation_text=f"中位數 {med_x:.0f}")
-            fig.update_layout(height=600); st.plotly_chart(fig, use_container_width=True)
-        st.markdown("---"); st.subheader("科系流失")
+
+        st.subheader(f"IPA 矩陣（{rate_select}）")
+        if not pool.empty:
+            x_col = "二階人數" if rate_select == "二→最終(%)" else "一階人數"
+            med_x = pool[x_col].median(); med_y = pool[rate_select].median()
+            fig = px.scatter(pool, x=x_col, y=rate_select, size=loss_col,
+                             hover_name="學校", title=f"IPA 矩陣 — {rate_select}",
+                             size_max=40, color=rate_select, color_continuous_scale="RdYlGn")
+            fig.add_hline(y=med_y, line_dash="dash", line_color="red",
+                          annotation_text=f"中位數 {med_y:.1f}%")
+            fig.add_vline(x=med_x, line_dash="dash", line_color="blue",
+                          annotation_text=f"中位數 {med_x:.0f}")
+            fig.update_layout(height=600)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---"); st.subheader("科系流失（三段）")
         result = build_dept_stats(p1, p2, p3)
         if result is not None:
             ds, _ = result
-            has_final_d = p3 is not None and ds["最終入學"].sum() > 0
-            drc = "一→最終(%)" if has_final_d else "一→二階(%)"
-            dll = "最終入學" if has_final_d else "二階人數"
-            ds["流失人數"] = ds["一階人數"] - ds[dll]
-            fig = px.scatter(ds, x="一階人數", y=drc, size="流失人數", hover_name="科系", text="科系",
-                             title=f"科系 IPA 矩陣", size_max=50, color=drc, color_continuous_scale="RdYlGn")
-            fig.update_traces(textposition="top center"); fig.update_layout(height=500)
+            dept_rate_select = st.radio("科系分析維度：",
+                ["一→最終(%)", "一→二階(%)", "二→最終(%)"],
+                horizontal=True, key=f"dept_loss_rate_{yr}")
+
+            if dept_rate_select == "二→最終(%)":
+                ds_view = ds[ds["二階人數"] > 0].copy()
+                d_loss_col = "二階流失"
+                d_x_col = "二階人數"
+            else:
+                ds_view = ds.copy()
+                d_loss_col = "流失人數"
+                d_x_col = "一階人數"
+
+            fig = px.scatter(ds_view, x=d_x_col, y=dept_rate_select,
+                             size=d_loss_col, hover_name="科系", text="科系",
+                             title=f"科系 IPA 矩陣 — {dept_rate_select}",
+                             size_max=50, color=dept_rate_select,
+                             color_continuous_scale="RdYlGn")
+            fig.update_traces(textposition="top center")
+            fig.update_layout(height=500)
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(ds.sort_values("流失人數", ascending=False), use_container_width=True, hide_index=True)
 
@@ -1200,7 +1353,6 @@ def render_cross_year():
     mod = st.radio("選擇跨年度分析模組：", mod_opts, horizontal=True, key="cross_mod")
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-    # 預載所有年度資料
     year_cache = {}
     for yr in valid_years:
         p1, p2, p3, geo, ch_col = get_year_dfs(yr)
@@ -1222,7 +1374,7 @@ def render_cross_year():
 
     # ═══ 跨年度 1：總覽 ═══
     if "總覽" in mod:
-        st.subheader("📊 跨年度總覽比較")
+        st.subheader("📊 跨年度總覽比較（三段轉換率）")
         summaries = []
         for yr, c in year_cache.items():
             sc = detect_school_col(c["p1"])
@@ -1230,30 +1382,27 @@ def render_cross_year():
             summaries.append({
                 "年度": yr,
                 "一階人數": c["n1"], "二階人數": c["n2"], "最終入學": c["n3"],
-                "一→二階(%)": round(c["n2"]/c["n1"]*100, 1) if c["n1"] and c["n2"] else 0,
-                "一→最終(%)": round(c["n3"]/c["n1"]*100, 1) if c["n1"] and c["n3"] else 0,
+                "一→二階(%)": safe_pct(c["n2"], c["n1"]),
+                "二→最終(%)": safe_pct(c["n3"], c["n2"]),
+                "一→最終(%)": safe_pct(c["n3"], c["n1"]),
+                "一→二流失": c["n1"] - c["n2"] if c["n2"] else 0,
+                "二→最終流失": c["n2"] - c["n3"] if c["n2"] and c["n3"] else 0,
+                "總流失": c["n1"] - c["n3"] if c["n3"] else 0,
                 "來源學校數": c["p1"][sc].nunique() if sc else 0,
-                "科系數": c["p1"][dc].nunique() if dc else 0
             })
         sdf = pd.DataFrame(summaries)
         st.dataframe(sdf, use_container_width=True, hide_index=True)
 
         if len(summaries) >= 2:
             latest = summaries[-1]; prev = summaries[-2]
-            cols = st.columns(4)
-            with cols[0]:
-                st.markdown(f"**一階人數** {latest['一階人數']:,}", unsafe_allow_html=True)
-                st.markdown(trend_arrow(latest['一階人數'], prev['一階人數']), unsafe_allow_html=True)
-            with cols[1]:
-                st.markdown(f"**最終入學** {latest['最終入學']:,}", unsafe_allow_html=True)
-                st.markdown(trend_arrow(latest['最終入學'], prev['最終入學']), unsafe_allow_html=True)
-            with cols[2]:
-                st.markdown(f"**一→最終(%)** {latest['一→最終(%)']}", unsafe_allow_html=True)
-                st.markdown(trend_arrow(latest['一→最終(%)'], prev['一→最終(%)']), unsafe_allow_html=True)
-            with cols[3]:
-                st.markdown(f"**來源學校數** {latest['來源學校數']}", unsafe_allow_html=True)
-                st.markdown(trend_arrow(latest['來源學校數'], prev['來源學校數']), unsafe_allow_html=True)
+            cols = st.columns(6)
+            labels = ["一階人數", "最終入學", "一→二階(%)", "二→最終(%)", "一→最終(%)", "來源學校數"]
+            for i, k in enumerate(labels):
+                with cols[i]:
+                    st.markdown(f"**{k}** {latest[k]:,}" if isinstance(latest[k], int) else f"**{k}** {latest[k]}", unsafe_allow_html=True)
+                    st.markdown(trend_arrow(latest[k], prev[k]), unsafe_allow_html=True)
 
+        # 人數趨勢
         fig = go.Figure()
         fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["一階人數"], name="一階", marker_color="#2196F3"))
         if sdf["二階人數"].sum() > 0:
@@ -1263,17 +1412,20 @@ def render_cross_year():
         fig.update_layout(barmode="group", title="各年度招生量", height=450)
         st.plotly_chart(fig, use_container_width=True)
 
-        fig = go.Figure()
-        if sdf["一→二階(%)"].sum() > 0:
-            fig.add_trace(go.Scatter(x=sdf["年度"], y=sdf["一→二階(%)"], name="一→二階",
-                mode="lines+markers+text", text=sdf["一→二階(%)"], textposition="top center",
-                line=dict(width=3, color="#FF9800"), marker=dict(size=10)))
-        if sdf["一→最終(%)"].sum() > 0:
-            fig.add_trace(go.Scatter(x=sdf["年度"], y=sdf["一→最終(%)"], name="一→最終",
-                mode="lines+markers+text", text=sdf["一→最終(%)"], textposition="top center",
-                line=dict(width=3, color="#4CAF50"), marker=dict(size=12)))
-        fig.update_layout(title="轉換率趨勢", yaxis_title="轉換率(%)", height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        # 三段轉換率趨勢折線
+        rate_fig = fig_three_rates_trend(sdf, "全校三段轉換率趨勢")
+        if rate_fig:
+            st.plotly_chart(rate_fig, use_container_width=True)
+
+        # 三段流失人數趨勢
+        if sdf["二→最終流失"].sum() > 0:
+            st.markdown("---")
+            st.subheader("三段流失人數趨勢")
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["一→二流失"], name="一→二階流失", marker_color="#FF9800"))
+            fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["二→最終流失"], name="二→最終流失", marker_color="#f44336"))
+            fig.update_layout(barmode="stack", title="流失人數結構（堆疊）", height=400)
+            st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---"); st.subheader("科系跨年度趨勢")
         all_depts = set()
@@ -1289,25 +1441,29 @@ def render_cross_year():
                     r = c["ds"][c["ds"]["科系"].apply(norm_dept) == sel_key]
                     if not r.empty:
                         r = r.iloc[0]
-                        rows.append({"年度": yr, "一階": int(r["一階人數"]), "二階": int(r["二階人數"]),
-                                     "最終": int(r["最終入學"]), "一→最終(%)": r["一→最終(%)"]})
+                        rows.append({"年度": yr, "一階": int(r["一階人數"]),
+                                     "二階": int(r["二階人數"]),
+                                     "最終": int(r["最終入學"]),
+                                     "一→二階(%)": r["一→二階(%)"],
+                                     "二→最終(%)": r["二→最終(%)"],
+                                     "一→最終(%)": r["一→最終(%)"]})
             if rows:
                 rdf = pd.DataFrame(rows)
                 st.dataframe(rdf, use_container_width=True, hide_index=True)
                 fig = go.Figure()
                 fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["一階"], name="一階", marker_color="#2196F3"))
+                fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["二階"], name="二階", marker_color="#FF9800"))
                 fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["最終"], name="最終", marker_color="#4CAF50"))
-                fig.add_trace(go.Scatter(x=rdf["年度"], y=rdf["一→最終(%)"], name="轉換率%",
-                    yaxis="y2", mode="lines+markers+text", text=rdf["一→最終(%)"],
-                    textposition="top center", line=dict(width=3, color="#E91E63")))
-                fig.update_layout(barmode="group", title=f"「{sel_dept}」跨年度趨勢",
-                    yaxis2=dict(title="轉換率(%)", overlaying="y", side="right", range=[0, 100]),
-                    height=450)
+                fig.update_layout(barmode="group", title=f"「{sel_dept}」跨年度人數", height=400)
                 st.plotly_chart(fig, use_container_width=True)
+
+                rate_fig = fig_three_rates_trend(rdf, f"「{sel_dept}」三段轉換率趨勢")
+                if rate_fig:
+                    st.plotly_chart(rate_fig, use_container_width=True)
 
     # ═══ 跨年度 2：漏斗 ═══
     elif "漏斗" in mod:
-        st.subheader("🔄 跨年度招生漏斗比較")
+        st.subheader("🔄 跨年度招生漏斗比較（三段轉換率）")
 
         st.markdown("#### 全校三階段漏斗")
         n_cols = len(year_cache)
@@ -1322,37 +1478,58 @@ def render_cross_year():
         fig.update_layout(height=450, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("---"); st.markdown("#### 各科系轉換率跨年度比較")
+        st.markdown("---"); st.markdown("#### 各科系三段轉換率跨年度比較")
         all_depts = set()
         for yr, c in year_cache.items():
             if c["ds"] is not None:
                 all_depts.update(c["ds"]["科系"].tolist())
         if all_depts:
+            rate_metric = st.radio("轉換率指標：",
+                ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
+                horizontal=True, key="cross_fun_rate")
             cross_dept_rows = []
             for yr, c in year_cache.items():
                 if c["ds"] is not None:
                     for _, row in c["ds"].iterrows():
                         cross_dept_rows.append({"年度": yr, "科系": row["科系"],
-                            "一階人數": int(row["一階人數"]), "最終入學": int(row["最終入學"]),
+                            "一階人數": int(row["一階人數"]),
+                            "二階人數": int(row["二階人數"]),
+                            "最終入學": int(row["最終入學"]),
+                            "一→二階(%)": row["一→二階(%)"],
+                            "二→最終(%)": row["二→最終(%)"],
                             "一→最終(%)": row["一→最終(%)"]})
             if cross_dept_rows:
                 cdf = pd.DataFrame(cross_dept_rows)
-                fig = px.bar(cdf, x="科系", y="一→最終(%)", color="年度", barmode="group",
-                             text="一→最終(%)", title="各科系轉換率（跨年度）")
+                fig = px.bar(cdf, x="科系", y=rate_metric, color="年度", barmode="group",
+                             text=rate_metric, title=f"各科系 {rate_metric}（跨年度）")
                 fig.update_layout(height=500, xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
-                pivot = cdf.pivot_table(index="科系", columns="年度", values="一→最終(%)", aggfunc="first")
+                pivot = cdf.pivot_table(index="科系", columns="年度", values=rate_metric, aggfunc="first")
                 st.dataframe(pivot.round(1), use_container_width=True)
+
+                # 三段轉換率 pivot 比較
+                st.markdown("#### 三段轉換率完整交叉表")
+                for rm in ["一→二階(%)", "二→最終(%)", "一→最終(%)"]:
+                    pv = cdf.pivot_table(index="科系", columns="年度", values=rm, aggfunc="first")
+                    st.markdown(f"**{rm}**")
+                    st.dataframe(pv.round(1), use_container_width=True)
 
         st.markdown("---"); st.markdown("#### 來源學校轉換率跨年度")
         mn = st.slider("一階≥", 1, 50, 10, key="cross_fun_mn")
+        sch_rate_metric = st.radio("學校轉換率指標：",
+            ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
+            horizontal=True, key="cross_fun_sch_rate")
         sch_rows = []
         for yr, c in year_cache.items():
             if c["ss"] is not None:
                 for _, row in c["ss"].iterrows():
                     if row["一階人數"] >= mn:
                         sch_rows.append({"年度": yr, "學校": row["學校"],
-                            "一階人數": int(row["一階人數"]), "最終入學": int(row["最終入學"]),
+                            "一階人數": int(row["一階人數"]),
+                            "二階人數": int(row["二階人數"]),
+                            "最終入學": int(row["最終入學"]),
+                            "一→二階(%)": row["一→二階(%)"],
+                            "二→最終(%)": row["二→最終(%)"],
                             "一→最終(%)": row["一→最終(%)"]})
         if sch_rows:
             sdf = pd.DataFrame(sch_rows)
@@ -1363,9 +1540,14 @@ def render_cross_year():
                 st.dataframe(sch_data, use_container_width=True, hide_index=True)
                 fig = go.Figure()
                 fig.add_trace(go.Bar(x=sch_data["年度"], y=sch_data["一階人數"], name="一階", marker_color="#2196F3"))
+                fig.add_trace(go.Bar(x=sch_data["年度"], y=sch_data["二階人數"], name="二階", marker_color="#FF9800"))
                 fig.add_trace(go.Bar(x=sch_data["年度"], y=sch_data["最終入學"], name="最終", marker_color="#4CAF50"))
-                fig.update_layout(barmode="group", title=f"「{sel_sch}」跨年度漏斗", height=400)
+                fig.update_layout(barmode="group", title=f"「{sel_sch}」跨年度人數", height=400)
                 st.plotly_chart(fig, use_container_width=True)
+
+                rate_fig = fig_three_rates_trend(sch_data, f"「{sel_sch}」三段轉換率趨勢")
+                if rate_fig:
+                    st.plotly_chart(rate_fig, use_container_width=True)
 
     # ═══ 跨年度 3：管道 ═══
     elif "管道" in mod:
@@ -1459,7 +1641,8 @@ def render_cross_year():
         for yr, c in year_cache.items():
             sc = detect_school_col(c["p1"])
             if sc:
-                geo_summary.append({"年度": yr, "來源學校數": c["p1"][sc].nunique(), "一階人數": c["n1"], "最終入學": c["n3"]})
+                geo_summary.append({"年度": yr, "來源學校數": c["p1"][sc].nunique(),
+                                    "一階人數": c["n1"], "最終入學": c["n3"]})
         if geo_summary:
             gdf = pd.DataFrame(geo_summary)
             fig = go.Figure()
@@ -1469,20 +1652,25 @@ def render_cross_year():
 
     # ═══ 跨年度 5：熱力圖 ═══
     elif "熱力圖" in mod:
-        st.subheader("🏫 跨年度科系×學校 熱力圖")
-        st.markdown("#### 科系×年度 招生量")
+        st.subheader("🏫 跨年度科系×學校 熱力圖（三段轉換率）")
         dept_year_rows = []
         for yr, c in year_cache.items():
             if c["ds"] is not None:
                 for _, row in c["ds"].iterrows():
                     dept_year_rows.append({"年度": yr, "科系": row["科系"],
-                        "一階人數": int(row["一階人數"]), "最終入學": int(row["最終入學"]),
+                        "一階人數": int(row["一階人數"]),
+                        "二階人數": int(row["二階人數"]),
+                        "最終入學": int(row["最終入學"]),
+                        "一→二階(%)": row["一→二階(%)"],
+                        "二→最終(%)": row["二→最終(%)"],
                         "一→最終(%)": row["一→最終(%)"]})
         if dept_year_rows:
             dydf = pd.DataFrame(dept_year_rows)
-            metric = st.radio("指標：", ["一階人數", "最終入學", "一→最終(%)"], horizontal=True, key="cross_hm_metric")
+            metric = st.radio("指標：",
+                ["一階人數", "二階人數", "最終入學", "一→二階(%)", "二→最終(%)", "一→最終(%)"],
+                horizontal=True, key="cross_hm_metric")
             pv = dydf.pivot_table(index="科系", columns="年度", values=metric, aggfunc="first").fillna(0)
-            colorscale = "YlOrRd" if "人數" in metric else "RdYlGn"
+            colorscale = "RdYlGn" if "%" in metric else "YlOrRd"
             fig = px.imshow(pv, text_auto=True, aspect="auto",
                             color_continuous_scale=colorscale, title=f"科系×年度：{metric}")
             fig.update_layout(height=max(400, len(pv) * 30))
@@ -1566,7 +1754,7 @@ def render_cross_year():
                             lost_data = prev_ss[prev_ss["學校"].apply(norm_school).isin(lost_schools)]
                             st.dataframe(lost_data.sort_values("一階人數", ascending=False), use_container_width=True, hide_index=True)
 
-        st.markdown("---"); st.markdown("#### 個別學校跨年度追蹤")
+        st.markdown("---"); st.markdown("#### 個別學校跨年度追蹤（三段轉換率）")
         all_sch_names = set()
         for yr, c in year_cache.items():
             if c["ss"] is not None:
@@ -1580,95 +1768,132 @@ def render_cross_year():
                     r = c["ss"][c["ss"]["學校"].apply(norm_school) == sel_key]
                     if not r.empty:
                         r = r.iloc[0]
-                        sch_rows.append({"年度": yr, "一階": int(r["一階人數"]), "二階": int(r["二階人數"]),
-                                         "最終": int(r["最終入學"]), "一→最終(%)": r["一→最終(%)"]})
+                        sch_rows.append({"年度": yr, "一階": int(r["一階人數"]),
+                                         "二階": int(r["二階人數"]),
+                                         "最終": int(r["最終入學"]),
+                                         "一→二階(%)": r["一→二階(%)"],
+                                         "二→最終(%)": r["二→最終(%)"],
+                                         "一→最終(%)": r["一→最終(%)"]})
             if sch_rows:
                 rdf = pd.DataFrame(sch_rows)
                 st.dataframe(rdf, use_container_width=True, hide_index=True)
                 fig = go.Figure()
                 fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["一階"], name="一階", marker_color="#2196F3"))
+                fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["二階"], name="二階", marker_color="#FF9800"))
                 fig.add_trace(go.Bar(x=rdf["年度"], y=rdf["最終"], name="最終", marker_color="#4CAF50"))
-                fig.add_trace(go.Scatter(x=rdf["年度"], y=rdf["一→最終(%)"], name="轉換率%",
-                    yaxis="y2", mode="lines+markers+text", text=rdf["一→最終(%)"],
-                    textposition="top center", line=dict(width=3, color="#E91E63")))
-                fig.update_layout(barmode="group", title=f"「{sel_sch}」跨年度趨勢",
-                    yaxis2=dict(title="轉換率(%)", overlaying="y", side="right", range=[0, 100]), height=450)
+                fig.update_layout(barmode="group", title=f"「{sel_sch}」跨年度人數", height=400)
                 st.plotly_chart(fig, use_container_width=True)
+
+                rate_fig = fig_three_rates_trend(rdf, f"「{sel_sch}」三段轉換率趨勢")
+                if rate_fig:
+                    st.plotly_chart(rate_fig, use_container_width=True)
             else:
                 st.info(f"「{sel_sch}」在選取的年度中無資料。")
 
     # ═══ 跨年度 7：流失預警 ═══
     elif "流失" in mod:
-        st.subheader("⚠️ 跨年度流失預警分析")
-        st.markdown("#### 全校流失趨勢")
+        st.subheader("⚠️ 跨年度流失預警分析（三段轉換率）")
+
+        # 全校三段流失趨勢
+        st.markdown("#### 全校三段流失趨勢")
         loss_summary = []
         for yr, c in year_cache.items():
-            loss = c["n1"] - c["n3"] if c["n3"] else c["n1"] - c["n2"]
-            rate = (c["n3"]/c["n1"]*100) if c["n1"] and c["n3"] else ((c["n2"]/c["n1"]*100) if c["n1"] and c["n2"] else 0)
-            loss_summary.append({"年度": yr, "一階": c["n1"], "最終入學": c["n3"],
-                                 "流失人數": loss, "轉換率(%)": round(rate, 1),
-                                 "流失率(%)": round(100-rate, 1)})
+            n1, n2, n3 = c["n1"], c["n2"], c["n3"]
+            loss_summary.append({
+                "年度": yr,
+                "一階": n1, "二階": n2, "最終入學": n3,
+                "一→二流失": n1 - n2 if n2 else 0,
+                "二→最終流失": n2 - n3 if n2 and n3 else 0,
+                "總流失": n1 - n3 if n3 else 0,
+                "一→二階(%)": safe_pct(n2, n1),
+                "二→最終(%)": safe_pct(n3, n2),
+                "一→最終(%)": safe_pct(n3, n1),
+            })
         lsdf = pd.DataFrame(loss_summary)
         st.dataframe(lsdf, use_container_width=True, hide_index=True)
+
+        # 三段轉換率趨勢
+        rate_fig = fig_three_rates_trend(lsdf, "全校三段轉換率趨勢")
+        if rate_fig:
+            st.plotly_chart(rate_fig, use_container_width=True)
+
+        # 三段流失人數趨勢
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=lsdf["年度"], y=lsdf["流失人數"], name="流失人數", marker_color="#f44336"))
-        fig.add_trace(go.Scatter(x=lsdf["年度"], y=lsdf["流失率(%)"], name="流失率%",
-            yaxis="y2", mode="lines+markers+text", text=lsdf["流失率(%)"],
-            textposition="top center", line=dict(width=3, color="#FF9800")))
-        fig.update_layout(title="全校流失趨勢",
-            yaxis2=dict(title="流失率(%)", overlaying="y", side="right", range=[0, 100]), height=450)
+        fig.add_trace(go.Bar(x=lsdf["年度"], y=lsdf["一→二流失"], name="一→二階流失", marker_color="#FF9800"))
+        fig.add_trace(go.Bar(x=lsdf["年度"], y=lsdf["二→最終流失"], name="二→最終流失", marker_color="#f44336"))
+        fig.update_layout(barmode="stack", title="流失人數結構（堆疊）", height=400)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("---"); st.markdown("#### 科系流失跨年度比較")
+        st.markdown("---"); st.markdown("#### 科系流失跨年度比較（三段）")
         dept_loss_rows = []
         for yr, c in year_cache.items():
             if c["ds"] is not None:
                 for _, row in c["ds"].iterrows():
                     dept_loss_rows.append({
                         "年度": yr, "科系": row["科系"],
-                        "一階": int(row["一階人數"]), "最終": int(row["最終入學"]),
-                        "流失": int(row["流失人數"]), "一→最終(%)": row["一→最終(%)"]
+                        "一階": int(row["一階人數"]),
+                        "二階": int(row["二階人數"]),
+                        "最終": int(row["最終入學"]),
+                        "一→二流失": int(row["一階人數"]) - int(row["二階人數"]),
+                        "二→最終流失": int(row.get("二階流失", row["二階人數"] - row["最終入學"])),
+                        "總流失": int(row["流失人數"]),
+                        "一→二階(%)": row["一→二階(%)"],
+                        "二→最終(%)": row["二→最終(%)"],
+                        "一→最終(%)": row["一→最終(%)"],
                     })
         if dept_loss_rows:
             dldf = pd.DataFrame(dept_loss_rows)
-            pv_loss = dldf.pivot_table(index="科系", columns="年度", values="流失", aggfunc="first").fillna(0)
-            fig = px.imshow(pv_loss, text_auto=True, aspect="auto",
-                            color_continuous_scale="OrRd", title="科系×年度：流失人數")
-            fig.update_layout(height=max(400, len(pv_loss)*30))
-            st.plotly_chart(fig, use_container_width=True)
-            pv_rate = dldf.pivot_table(index="科系", columns="年度", values="一→最終(%)", aggfunc="first").fillna(0)
-            fig = px.imshow(pv_rate, text_auto=True, aspect="auto",
-                            color_continuous_scale="RdYlGn", title="科系×年度：轉換率(%)")
-            fig.update_layout(height=max(400, len(pv_rate)*30))
+
+            hm_metric = st.radio("熱力圖指標：",
+                ["一→二階(%)", "二→最終(%)", "一→最終(%)", "一→二流失", "二→最終流失", "總流失"],
+                horizontal=True, key="cross_loss_hm")
+            pv = dldf.pivot_table(index="科系", columns="年度", values=hm_metric, aggfunc="first").fillna(0)
+            colorscale = "RdYlGn" if "%" in hm_metric else "OrRd"
+            fig = px.imshow(pv, text_auto=True, aspect="auto",
+                            color_continuous_scale=colorscale, title=f"科系×年度：{hm_metric}")
+            fig.update_layout(height=max(400, len(pv)*30))
             st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("---"); st.markdown("#### 🚨 惡化偵測（轉換率下降的科系）")
+        st.markdown("---"); st.markdown("#### 🚨 惡化偵測（三段轉換率）")
         yr_list = list(year_cache.keys())
         if len(yr_list) >= 2 and dept_loss_rows:
             dldf_full = pd.DataFrame(dept_loss_rows)
+            det_metric = st.radio("偵測指標：",
+                ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
+                horizontal=True, key="cross_det_metric")
             deteriorating = []
             for dept in dldf_full["科系"].unique():
                 dept_data = dldf_full[dldf_full["科系"] == dept].sort_values("年度")
                 if len(dept_data) >= 2:
-                    latest = dept_data.iloc[-1]["一→最終(%)"]
-                    prev = dept_data.iloc[-2]["一→最終(%)"]
+                    latest = dept_data.iloc[-1][det_metric]
+                    prev = dept_data.iloc[-2][det_metric]
                     if prev > 0 and latest < prev:
                         drop = prev - latest
                         deteriorating.append({
                             "科系": dept,
-                            f"{yr_list[-2]} 轉換率(%)": prev,
-                            f"{yr_list[-1]} 轉換率(%)": latest,
-                            "下降幅度": round(drop, 1)
+                            f"{yr_list[-2]}": prev,
+                            f"{yr_list[-1]}": latest,
+                            "下降幅度": round(drop, 1),
+                            "嚴重程度": "🔴 嚴重" if drop > 10 else ("🟠 注意" if drop > 5 else "🟡 輕微")
                         })
             if deteriorating:
                 det_df = pd.DataFrame(deteriorating).sort_values("下降幅度", ascending=False)
-                st.markdown(f'<div class="warning-box">⚠️ {len(det_df)} 個科系轉換率下降</div>', unsafe_allow_html=True)
+                n_severe = len(det_df[det_df["嚴重程度"].str.contains("嚴重")])
+                n_warn = len(det_df[det_df["嚴重程度"].str.contains("注意")])
+                st.markdown(
+                    f'<div class="warning-box">'
+                    f'⚠️ {len(det_df)} 個科系的 {det_metric} 下降 '
+                    f'（🔴 嚴重 {n_severe} ｜ 🟠 注意 {n_warn}）</div>',
+                    unsafe_allow_html=True)
                 st.dataframe(det_df, use_container_width=True, hide_index=True)
             else:
-                st.success("✅ 所有科系轉換率持平或上升！")
+                st.success(f"✅ 所有科系的 {det_metric} 持平或上升！")
 
-        st.markdown("---"); st.markdown("#### 🚨 學校流失惡化偵測")
+        st.markdown("---"); st.markdown("#### 🚨 學校流失惡化偵測（三段）")
         mn = st.slider("一階≥", 1, 50, 10, key="cross_loss_mn")
+        sch_det_metric = st.radio("學校偵測指標：",
+            ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
+            horizontal=True, key="cross_sch_det_metric")
         if len(yr_list) >= 2:
             prev_yr = yr_list[-2]; curr_yr = yr_list[-1]
             prev_ss = year_cache[prev_yr].get("ss")
@@ -1676,47 +1901,62 @@ def render_cross_year():
             if prev_ss is not None and curr_ss is not None:
                 prev_filt = prev_ss[prev_ss["一階人數"] >= mn].copy()
                 curr_filt = curr_ss[curr_ss["一階人數"] >= mn].copy()
+                if sch_det_metric == "二→最終(%)":
+                    prev_filt = prev_filt[prev_filt["二階人數"] > 0]
+                    curr_filt = curr_filt[curr_filt["二階人數"] > 0]
                 prev_filt["_key"] = prev_filt["學校"].apply(norm_school)
                 curr_filt["_key"] = curr_filt["學校"].apply(norm_school)
-                merged = prev_filt[["_key", "學校", "一→最終(%)"]].merge(
-                    curr_filt[["_key", "一→最終(%)"]], on="_key", suffixes=(f"_{prev_yr}", f"_{curr_yr}"))
-                merged["變化"] = merged[f"一→最終(%)_{curr_yr}"] - merged[f"一→最終(%)_{prev_yr}"]
+                merged = prev_filt[["_key", "學校", sch_det_metric]].merge(
+                    curr_filt[["_key", sch_det_metric]], on="_key",
+                    suffixes=(f"_{prev_yr}", f"_{curr_yr}"))
+                merged["變化"] = merged[f"{sch_det_metric}_{curr_yr}"] - merged[f"{sch_det_metric}_{prev_yr}"]
                 deteriorating_sch = merged[merged["變化"] < -5].sort_values("變化")
                 improving_sch = merged[merged["變化"] > 5].sort_values("變化", ascending=False)
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.markdown(f"**❌ 惡化學校（下降>5%）：{len(deteriorating_sch)} 校**")
+                    st.markdown(f"**❌ 惡化學校（{sch_det_metric} 下降>5%）：{len(deteriorating_sch)} 校**")
                     if not deteriorating_sch.empty:
-                        st.dataframe(deteriorating_sch[["學校", f"一→最終(%)_{prev_yr}",
-                            f"一→最終(%)_{curr_yr}", "變化"]].head(20),
+                        st.dataframe(deteriorating_sch[["學校",
+                            f"{sch_det_metric}_{prev_yr}",
+                            f"{sch_det_metric}_{curr_yr}", "變化"]].head(20),
                             use_container_width=True, hide_index=True)
                     else:
                         st.success("✅ 無嚴重惡化")
                 with c2:
-                    st.markdown(f"**✅ 改善學校（上升>5%）：{len(improving_sch)} 校**")
+                    st.markdown(f"**✅ 改善學校（{sch_det_metric} 上升>5%）：{len(improving_sch)} 校**")
                     if not improving_sch.empty:
-                        st.dataframe(improving_sch[["學校", f"一→最終(%)_{prev_yr}",
-                            f"一→最終(%)_{curr_yr}", "變化"]].head(20),
+                        st.dataframe(improving_sch[["學校",
+                            f"{sch_det_metric}_{prev_yr}",
+                            f"{sch_det_metric}_{curr_yr}", "變化"]].head(20),
                             use_container_width=True, hide_index=True)
                     else:
                         st.info("無顯著改善")
 
-        st.markdown("---"); st.markdown("#### IPA 矩陣（跨年度疊合）")
+        st.markdown("---"); st.markdown("#### IPA 矩陣（跨年度疊合·三段可選）")
+        ipa_metric = st.radio("IPA Y軸指標：",
+            ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
+            horizontal=True, key="cross_ipa_metric")
         fig = go.Figure()
         colors = px.colors.qualitative.Set2
         for i, (yr, c) in enumerate(year_cache.items()):
             if c["ss"] is not None:
                 pool = c["ss"][c["ss"]["一階人數"] >= mn].copy()
+                if ipa_metric == "二→最終(%)":
+                    pool = pool[pool["二階人數"] > 0]
                 if not pool.empty:
+                    x_col = "二階人數" if ipa_metric == "二→最終(%)" else "一階人數"
+                    size_col = "二階流失" if ipa_metric == "二→最終(%)" else "流失人數"
                     fig.add_trace(go.Scatter(
-                        x=pool["一階人數"], y=pool["一→最終(%)"],
+                        x=pool[x_col], y=pool[ipa_metric],
                         mode="markers", name=yr,
-                        marker=dict(size=pool["流失人數"].clip(lower=3)*0.8,
+                        marker=dict(size=pool[size_col].clip(lower=3)*0.8,
                                     color=colors[i % len(colors)], opacity=0.6),
-                        text=pool["學校"], hovertemplate="%{text}<br>一階:%{x}<br>轉換率:%{y}%"
+                        text=pool["學校"],
+                        hovertemplate="%{text}<br>" + x_col + ":%{x}<br>" + ipa_metric + ":%{y}%"
                     ))
-        fig.update_layout(title="IPA 矩陣（跨年度）", xaxis_title="一階人數",
-                          yaxis_title="一→最終(%)", height=600, showlegend=True)
+        fig.update_layout(title=f"IPA 矩陣 — {ipa_metric}（跨年度）",
+                          xaxis_title="人數", yaxis_title=ipa_metric,
+                          height=600, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -1742,6 +1982,6 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 ver = st.session_state.get("analysis_version", 0)
 st.markdown(
     '<div style="text-align:center;color:#aaa;font-size:.85rem;padding:10px;">'
-    '🎓 中華醫事科技大學 招生數據分析系統 v6.5<br>'
-    '縮寫展開引擎 ｜ 跨年度七模組分析 ｜ P1科系優先映射<br>'
+    '🎓 中華醫事科技大學 招生數據分析系統 v6.6<br>'
+    '三段轉換率完整追蹤 ｜ 縮寫展開引擎 ｜ 跨年度七模組分析<br>'
     '分析版本 #' + str(ver) + '</div>', unsafe_allow_html=True)
