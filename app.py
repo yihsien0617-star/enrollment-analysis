@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-中華醫事科技大學 招生數據分析系統 v6.4
+中華醫事科技大學 招生數據分析系統 v6.5
+- 修正：「四寵護一A」等縮寫班級名稱映射遺漏
+- 新增：ABBREV 縮寫展開引擎（寵護→寵物照護、食營→食品營養...）
 - 新增：跨年度七模組完整分析
 - 修正：班級名稱結構化解析（學制+科系+年級+班別）
 - 修正：P1科系優先映射引擎
@@ -70,7 +72,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">🎓 中華醫事科技大學 招生數據分析系統</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Enrollment Analytics v6.4 ｜ 跨年度七模組完整分析 ｜ 班級結構化解析</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Enrollment Analytics v6.5 ｜ 縮寫展開引擎 ｜ 跨年度七模組分析</div>', unsafe_allow_html=True)
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
 # ============================================================
@@ -82,10 +84,45 @@ FINAL_CH_CANDIDATES = [
 ]
 HWU = {"lat": 22.9340, "lon": 120.2756}
 
+# ── 縮寫展開字典（班級名稱常見縮寫 → 完整科系關鍵字）──
+ABBREV_EXPAND = {
+    "寵護": "寵物照護與美容",
+    "寵美": "寵物美容",
+    "寵經": "寵物經營",
+    "食營": "食品營養",
+    "環安": "環境與安全衛生工程",
+    "環衛": "環境與安全衛生工程",
+    "職安": "職業安全衛生",
+    "資管": "資訊管理",
+    "多媒": "多媒體設計",
+    "幼保": "幼兒保育",
+    "運休": "運動健康與休閒",
+    "餐旅": "餐旅管理",
+    "觀光": "觀光休閒事業管理",
+    "觀休": "觀光休閒事業管理",
+    "妝管": "化妝品應用與管理",
+    "美妝": "化妝品應用與管理",
+    "化妝": "化妝品應用與管理",
+    "調保": "調理保健技術",
+    "調理": "調理保健技術",
+    "語治": "語言治療",
+    "牙技": "牙體技術",
+    "生科": "生物科技",
+    "醫技": "醫學檢驗生物技術",
+    "醫檢": "醫學檢驗生物技術",
+    "醫管": "醫務暨健康事務管理",
+    "健管": "醫務暨健康事務管理",
+    "製藥": "製藥工程",
+    "長照": "長期照護",
+    "護理": "護理",
+    "藥學": "藥學",
+    "視光": "視光",
+}
+
 DEPT_ALIAS = {
-    "護理": "護理系", "醫技": "醫學檢驗生物技術系",
-    "醫檢": "醫學檢驗生物技術系", "醫學檢驗": "醫學檢驗生物技術系",
-    "醫學檢驗生物技術": "醫學檢驗生物技術系",
+    "護理": "護理系",
+    "醫技": "醫學檢驗生物技術系", "醫檢": "醫學檢驗生物技術系",
+    "醫學檢驗": "醫學檢驗生物技術系", "醫學檢驗生物技術": "醫學檢驗生物技術系",
     "藥學": "藥學系", "視光": "視光系",
     "製藥": "製藥工程系", "製藥工程": "製藥工程系",
     "食營": "食品營養系", "食品營養": "食品營養系",
@@ -93,31 +130,33 @@ DEPT_ALIAS = {
     "環安": "環境與安全衛生工程系", "環衛": "環境與安全衛生工程系",
     "環境與安全衛生工程": "環境與安全衛生工程系",
     "資管": "資訊管理系", "資訊管理": "資訊管理系",
-    "多媒體": "多媒體設計系", "多媒體設計": "多媒體設計系",
+    "多媒體": "多媒體設計系", "多媒體設計": "多媒體設計系", "多媒": "多媒體設計系",
     "幼保": "幼兒保育系", "幼兒保育": "幼兒保育系",
     "運休": "運動健康與休閒系", "運動休閒": "運動健康與休閒系",
     "運動健康與休閒": "運動健康與休閒系",
     "餐旅": "餐旅管理系", "餐旅管理": "餐旅管理系",
     "觀光": "觀光休閒事業管理系", "觀光休閒": "觀光休閒事業管理系",
-    "觀光休閒事業管理": "觀光休閒事業管理系",
+    "觀休": "觀光休閒事業管理系", "觀光休閒事業管理": "觀光休閒事業管理系",
     "妝管": "化妝品應用與管理系", "美妝": "化妝品應用與管理系",
     "化妝品": "化妝品應用與管理系", "化妝品應用": "化妝品應用與管理系",
-    "化妝品應用與管理": "化妝品應用與管理系",
+    "化妝品應用與管理": "化妝品應用與管理系", "化妝": "化妝品應用與管理系",
     "調理": "調理保健技術系", "調保": "調理保健技術系",
     "調理保健": "調理保健技術系", "調理保健技術": "調理保健技術系",
     "語治": "語言治療系", "語言治療": "語言治療系",
     "牙技": "牙體技術系", "牙體技術": "牙體技術系",
     "生科": "生物科技系", "生物科技": "生物科技系",
     "寵物": "寵物美容學位學程", "寵物美容": "寵物美容學位學程",
-    "寵物照護": "寵物照護學位學程", "寵物經營": "寵物經營學位學程",
+    "寵美": "寵物美容學位學程",
+    "寵物照護": "寵物照護學位學程", "寵護": "寵物照護學位學程",
+    "寵物經營": "寵物經營學位學程", "寵經": "寵物經營學位學程",
     "長照": "長期照護學位學程", "長期照護": "長期照護學位學程",
     "醫管": "醫務暨健康事務管理系", "醫務管理": "醫務暨健康事務管理系",
-    "健康事務管理": "醫務暨健康事務管理系",
+    "健康事務管理": "醫務暨健康事務管理系", "健管": "醫務暨健康事務管理系",
     "醫務暨健康事務管理": "醫務暨健康事務管理系",
 }
 
 # ============================================================
-# 班級名稱結構化解析器
+# 班級名稱結構化解析器（v6.5 增強版）
 # ============================================================
 CLASS_PATTERN = re.compile(
     r'^(二技|四技|二|四)?'
@@ -133,6 +172,16 @@ CLASS_PATTERN_SIMPLE = re.compile(
 )
 
 
+def expand_abbrev(dept_kw):
+    """展開班級名稱中的科系縮寫"""
+    if dept_kw in ABBREV_EXPAND:
+        return ABBREV_EXPAND[dept_kw]
+    # 嘗試兩字元首碼
+    if len(dept_kw) >= 2 and dept_kw[:2] in ABBREV_EXPAND:
+        return ABBREV_EXPAND[dept_kw[:2]]
+    return dept_kw
+
+
 def parse_class_name(class_name):
     if not isinstance(class_name, str):
         return None
@@ -142,7 +191,7 @@ def parse_class_name(class_name):
     m = CLASS_PATTERN.match(s)
     if m:
         prefix = m.group(1) or ""
-        dept_kw = m.group(2)
+        dept_kw_raw = m.group(2)
         grade = m.group(3)
         section = m.group(4)
         if prefix in ("二", "二技"):
@@ -151,47 +200,75 @@ def parse_class_name(class_name):
             program = "四技"
         else:
             program = "五專"
-        return (program, dept_kw, grade, section)
+        # ★ v6.5: 縮寫展開
+        dept_kw = expand_abbrev(dept_kw_raw)
+        return (program, dept_kw, grade, section, dept_kw_raw)
     m2 = CLASS_PATTERN_SIMPLE.match(s)
     if m2:
         prefix = m2.group(1) or ""
-        dept_kw = m2.group(2)
+        dept_kw_raw = m2.group(2)
         if prefix in ("二", "二技"):
             program = "二技"
         elif prefix in ("四", "四技"):
             program = "四技"
         else:
             program = ""
-        return (program, dept_kw, "", "")
+        dept_kw = expand_abbrev(dept_kw_raw)
+        return (program, dept_kw, "", "", dept_kw_raw)
     return None
 
 
-def resolve_dept_from_keyword(dept_kw, p1_depts=None):
+def resolve_dept_from_keyword(dept_kw, p1_depts=None, dept_kw_raw=None):
+    """
+    解析科系關鍵字 → 科系全名
+    優先順序：
+      1. 用展開後的 dept_kw 直接匹配 P1 科系
+      2. 用原始 dept_kw_raw 查 DEPT_ALIAS
+      3. 用展開後 dept_kw 查 DEPT_ALIAS
+      4. 模糊匹配
+    """
     kw = dept_kw.strip()
+    raw = (dept_kw_raw or kw).strip()
+
     if p1_depts:
         p1_cores = {}
         for d in p1_depts:
             core = re.sub(r'(學位學程|學程|系|科)$', '', norm_dept(d))
             p1_cores[core] = d
+        # 直接匹配展開後
         if kw in p1_cores:
             return p1_cores[kw]
+        # 包含匹配（雙向）
         for core, dept in sorted(p1_cores.items(), key=lambda x: len(x[0]), reverse=True):
             if len(kw) >= 2 and (kw in core or core in kw):
                 return dept
-    if kw in DEPT_ALIAS:
-        alias_result = DEPT_ALIAS[kw]
-        if p1_depts:
-            alias_core = re.sub(r'(學位學程|學程|系|科)$', '', norm_dept(alias_result))
-            for d in p1_depts:
-                d_core = re.sub(r'(學位學程|學程|系|科)$', '', norm_dept(d))
-                if alias_core == d_core or alias_core in d_core or d_core in alias_core:
-                    return d
-        return alias_result
+
+    # 查 DEPT_ALIAS（先查原始縮寫，再查展開後）
+    for try_kw in [raw, kw]:
+        if try_kw in DEPT_ALIAS:
+            alias_result = DEPT_ALIAS[try_kw]
+            if p1_depts:
+                alias_core = re.sub(r'(學位學程|學程|系|科)$', '', norm_dept(alias_result))
+                for d in p1_depts:
+                    d_core = re.sub(r'(學位學程|學程|系|科)$', '', norm_dept(d))
+                    if alias_core == d_core or alias_core in d_core or d_core in alias_core:
+                        return d
+            return alias_result
+
+    # 模糊：前兩字元
     if p1_depts and len(kw) >= 2:
         short = kw[:2]
         for d in p1_depts:
             if short in d:
                 return d
+
+    # 最後嘗試原始縮寫的前兩字元
+    if p1_depts and len(raw) >= 2 and raw != kw:
+        short = raw[:2]
+        for d in p1_depts:
+            if short in d:
+                return d
+
     return None
 
 
@@ -266,13 +343,18 @@ def auto_map_class_to_dept(df, class_col, p1_depts=None):
         if parsed is None:
             match_detail[cls] = "❌ 無法解析格式"
             continue
-        program, dept_kw, grade, section = parsed
-        dept = resolve_dept_from_keyword(dept_kw, p1_depts)
+        if len(parsed) == 5:
+            program, dept_kw, grade, section, dept_kw_raw = parsed
+        else:
+            program, dept_kw, grade, section = parsed
+            dept_kw_raw = dept_kw
+        dept = resolve_dept_from_keyword(dept_kw, p1_depts, dept_kw_raw)
         if dept:
             mapping[cls] = dept
-            match_detail[cls] = f"✅ [{program}] 關鍵字「{dept_kw}」→ {dept}"
+            abbrev_note = f"（縮寫「{dept_kw_raw}」→「{dept_kw}」）" if dept_kw_raw != dept_kw else ""
+            match_detail[cls] = f"✅ [{program}] 關鍵字「{dept_kw}」{abbrev_note} → {dept}"
         else:
-            match_detail[cls] = f"❌ [{program}] 關鍵字「{dept_kw}」→ 找不到對應科系"
+            match_detail[cls] = f"❌ [{program}] 關鍵字「{dept_kw}」（原始：{dept_kw_raw}）→ 找不到對應科系"
     df["_mapped_dept"] = classes.map(mapping)
     return df, mapping, match_detail
 
@@ -647,18 +729,23 @@ with st.sidebar:
                     st.markdown(
                         f'<div class="mapping-box">'
                         f'📋 偵測到班級欄位：「{cc3}」<br>'
-                        f'結構化解析：[學制][科系][年級][班別]</div>',
+                        f'v6.5 解析：[學制][科系縮寫→展開][年級][班別]</div>',
                         unsafe_allow_html=True)
-                    sample = p3df[cc3].value_counts().head(8)
+                    sample = p3df[cc3].value_counts().head(10)
                     for cn, cnt in sample.items():
                         parsed = parse_class_name(str(cn))
                         if parsed:
-                            prog, dept_kw, grade, sec = parsed
-                            dept = resolve_dept_from_keyword(dept_kw, preview_p1_depts)
-                            if dept:
-                                st.caption(f"　✅ {cn}（{cnt}人）→ [{prog}]{dept_kw} → {dept}")
+                            if len(parsed) == 5:
+                                prog, dept_kw, grade, sec, dept_kw_raw = parsed
                             else:
-                                st.caption(f"　❌ {cn}（{cnt}人）→ [{prog}]「{dept_kw}」找不到科系")
+                                prog, dept_kw, grade, sec = parsed
+                                dept_kw_raw = dept_kw
+                            dept = resolve_dept_from_keyword(dept_kw, preview_p1_depts, dept_kw_raw)
+                            abbrev_note = f"「{dept_kw_raw}」→「{dept_kw}」" if dept_kw_raw != dept_kw else f"「{dept_kw}」"
+                            if dept:
+                                st.caption(f"　✅ {cn}（{cnt}人）→ [{prog}]{abbrev_note} → {dept}")
+                            else:
+                                st.caption(f"　❌ {cn}（{cnt}人）→ [{prog}]{abbrev_note} → 找不到科系")
                         else:
                             st.caption(f"　❌ {cn}（{cnt}人）→ 無法解析格式")
                 else:
@@ -819,8 +906,9 @@ def show_field_diagnosis(p1, p2, p3, yr_label):
                     for cn, cnt in unmapped_classes.items():
                         parsed = parse_class_name(str(cn))
                         if parsed:
-                            _, dept_kw, _, _ = parsed
-                            st.caption(f"　❌ {cn}（{cnt}人）→ 關鍵字「{dept_kw}」找不到對應科系")
+                            dept_kw = parsed[1]
+                            dept_kw_raw = parsed[4] if len(parsed) == 5 else dept_kw
+                            st.caption(f"　❌ {cn}（{cnt}人）→ 關鍵字「{dept_kw}」（原始：{dept_kw_raw}）找不到對應科系")
                         else:
                             st.caption(f"　❌ {cn}（{cnt}人）→ 無法解析格式")
 
@@ -922,14 +1010,15 @@ def render_year_analysis(yr):
             if p3_info and p3_info.get("method") == "class_mapping":
                 mapping = p3_info.get("mapping", {})
                 match_detail = p3_info.get("match_detail", {})
-                if mapping:
-                    with st.expander("🔍 班級→科系映射明細", expanded=False):
+                if mapping or match_detail:
+                    with st.expander("🔍 班級→科系映射明細（含縮寫展開）", expanded=False):
                         rows = []
-                        for cls in sorted(mapping.keys()):
-                            rows.append({"班級名稱": cls, "映射科系": mapping[cls], "映射方法": match_detail.get(cls, "")})
-                        for cls, detail in match_detail.items():
-                            if cls not in mapping:
-                                rows.append({"班級名稱": cls, "映射科系": "❌ 未映射", "映射方法": detail})
+                        for cls in sorted(set(list(mapping.keys()) + list(match_detail.keys()))):
+                            rows.append({
+                                "班級名稱": cls,
+                                "映射科系": mapping.get(cls, "❌ 未映射"),
+                                "映射方法": match_detail.get(cls, "")
+                            })
                         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             st.dataframe(ds.sort_values("一階人數", ascending=False), use_container_width=True, hide_index=True)
 
@@ -1131,13 +1220,9 @@ def render_cross_year():
     if not year_cache:
         st.warning("⚠️ 沒有有效的年度資料。"); return
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 1：總覽儀表板
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 1：總覽 ═══
     if "總覽" in mod:
         st.subheader("📊 跨年度總覽比較")
-
-        # KPI 摘要表
         summaries = []
         for yr, c in year_cache.items():
             sc = detect_school_col(c["p1"])
@@ -1153,7 +1238,6 @@ def render_cross_year():
         sdf = pd.DataFrame(summaries)
         st.dataframe(sdf, use_container_width=True, hide_index=True)
 
-        # YoY 趨勢卡片
         if len(summaries) >= 2:
             latest = summaries[-1]; prev = summaries[-2]
             cols = st.columns(4)
@@ -1170,7 +1254,6 @@ def render_cross_year():
                 st.markdown(f"**來源學校數** {latest['來源學校數']}", unsafe_allow_html=True)
                 st.markdown(trend_arrow(latest['來源學校數'], prev['來源學校數']), unsafe_allow_html=True)
 
-        # 招生量柱狀圖
         fig = go.Figure()
         fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["一階人數"], name="一階", marker_color="#2196F3"))
         if sdf["二階人數"].sum() > 0:
@@ -1180,7 +1263,6 @@ def render_cross_year():
         fig.update_layout(barmode="group", title="各年度招生量", height=450)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 轉換率趨勢線
         fig = go.Figure()
         if sdf["一→二階(%)"].sum() > 0:
             fig.add_trace(go.Scatter(x=sdf["年度"], y=sdf["一→二階(%)"], name="一→二階",
@@ -1193,7 +1275,6 @@ def render_cross_year():
         fig.update_layout(title="轉換率趨勢", yaxis_title="轉換率(%)", height=400)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 科系跨年度彙總
         st.markdown("---"); st.subheader("科系跨年度趨勢")
         all_depts = set()
         for yr, c in year_cache.items():
@@ -1224,17 +1305,15 @@ def render_cross_year():
                     height=450)
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 2：招生漏斗
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 2：漏斗 ═══
     elif "漏斗" in mod:
         st.subheader("🔄 跨年度招生漏斗比較")
 
-        # 全校漏斗比較
         st.markdown("#### 全校三階段漏斗")
-        fig = make_subplots(rows=1, cols=len(year_cache),
+        n_cols = len(year_cache)
+        fig = make_subplots(rows=1, cols=n_cols,
                             subplot_titles=list(year_cache.keys()),
-                            specs=[[{"type": "funnel"}] * len(year_cache)])
+                            specs=[[{"type": "funnel"}] * n_cols])
         for i, (yr, c) in enumerate(year_cache.items()):
             fl, fv = ["一階"], [c["n1"]]
             if c["n2"]: fl.append("二階"); fv.append(c["n2"])
@@ -1243,7 +1322,6 @@ def render_cross_year():
         fig.update_layout(height=450, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 科系轉換率跨年度比較
         st.markdown("---"); st.markdown("#### 各科系轉換率跨年度比較")
         all_depts = set()
         for yr, c in year_cache.items():
@@ -1263,12 +1341,9 @@ def render_cross_year():
                              text="一→最終(%)", title="各科系轉換率（跨年度）")
                 fig.update_layout(height=500, xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
-
-                # 轉換率變化表
                 pivot = cdf.pivot_table(index="科系", columns="年度", values="一→最終(%)", aggfunc="first")
                 st.dataframe(pivot.round(1), use_container_width=True)
 
-        # 學校漏斗跨年度
         st.markdown("---"); st.markdown("#### 來源學校轉換率跨年度")
         mn = st.slider("一階≥", 1, 50, 10, key="cross_fun_mn")
         sch_rows = []
@@ -1292,12 +1367,9 @@ def render_cross_year():
                 fig.update_layout(barmode="group", title=f"「{sel_sch}」跨年度漏斗", height=400)
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 3：入學管道
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 3：管道 ═══
     elif "管道" in mod:
         st.subheader("📈 跨年度入學管道比較")
-
         ch_data_all = []
         for yr, c in year_cache.items():
             if c["p3"] is not None and c["ch_col"] and c["ch_col"] in c["p3"].columns:
@@ -1306,30 +1378,21 @@ def render_cross_year():
                 cd["年度"] = yr
                 cd["佔比(%)"] = (cd["人數"] / cd["人數"].sum() * 100).round(1)
                 ch_data_all.append(cd)
-
         if not ch_data_all:
             st.warning("⚠️ 沒有年度有入學管道資料。"); return
-
         all_ch = pd.concat(ch_data_all, ignore_index=True)
-
-        # 管道人數跨年度
         fig = px.bar(all_ch, x="入學管道", y="人數", color="年度", barmode="group",
                      text="人數", title="各管道人數（跨年度）")
         fig.update_layout(height=500, xaxis_tickangle=-45)
         st.plotly_chart(fig, use_container_width=True)
-
-        # 管道佔比跨年度
         fig = px.bar(all_ch, x="年度", y="佔比(%)", color="入學管道", barmode="stack",
                      text="佔比(%)", title="管道結構比例（跨年度）")
         fig.update_layout(height=500)
         st.plotly_chart(fig, use_container_width=True)
-
-        # 管道佔比變化表
         pivot = all_ch.pivot_table(index="入學管道", columns="年度", values="人數", aggfunc="sum").fillna(0).astype(int)
         st.subheader("管道人數交叉表")
         st.dataframe(pivot, use_container_width=True)
 
-        # 單一管道趨勢
         st.markdown("---"); st.subheader("單一管道趨勢追蹤")
         all_channels = sorted(all_ch["入學管道"].unique())
         sel_ch = st.selectbox("選擇管道：", all_channels, key="cross_ch_sel")
@@ -1344,7 +1407,6 @@ def render_cross_year():
                 yaxis2=dict(title="佔比(%)", overlaying="y", side="right", range=[0, 100]), height=400)
             st.plotly_chart(fig, use_container_width=True)
 
-        # 管道×科系跨年度
         st.markdown("---"); st.subheader("管道×科系 跨年度")
         ch_dept_rows = []
         for yr, c in year_cache.items():
@@ -1369,30 +1431,22 @@ def render_cross_year():
                 fig.update_layout(height=450, xaxis_tickangle=-45)
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 4：地理分布
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 4：地理 ═══
     elif "地理" in mod:
         st.subheader("🗺️ 跨年度地理分布比較")
-
-        # 合併所有年度的地理資料
         phase_select = st.radio("選擇階段：", ["一階報名", "最終入學"], horizontal=True, key="cross_geo_phase")
-
         for yr, c in year_cache.items():
             if c["geo"] is None:
                 continue
             st.markdown(f"### {yr}")
             if "一階" in phase_select:
-                src = c["p1"]
-                label = "報名人數"
+                src = c["p1"]; label = "報名人數"
             else:
-                src = c["p3"]
-                label = "入學人數"
+                src = c["p3"]; label = "入學人數"
             if src is None:
                 st.info(f"{yr}：無此階段資料"); continue
             sc = detect_school_col(src)
-            if sc is None:
-                continue
+            if sc is None: continue
             agg = src.groupby(sc).size().reset_index(name=label)
             agg["_std"] = agg[sc].apply(norm_school)
             agg = agg.merge(c["geo"], on="_std", how="left").drop(columns=["_std"])
@@ -1400,18 +1454,12 @@ def render_cross_year():
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-        # 來源學校地理覆蓋比較
         st.markdown("---"); st.subheader("來源學校數量比較")
         geo_summary = []
         for yr, c in year_cache.items():
             sc = detect_school_col(c["p1"])
             if sc:
-                geo_summary.append({
-                    "年度": yr,
-                    "來源學校數": c["p1"][sc].nunique(),
-                    "一階人數": c["n1"],
-                    "最終入學": c["n3"]
-                })
+                geo_summary.append({"年度": yr, "來源學校數": c["p1"][sc].nunique(), "一階人數": c["n1"], "最終入學": c["n3"]})
         if geo_summary:
             gdf = pd.DataFrame(geo_summary)
             fig = go.Figure()
@@ -1419,13 +1467,9 @@ def render_cross_year():
             fig.update_layout(title="來源學校數趨勢", height=400)
             st.plotly_chart(fig, use_container_width=True)
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 5：科系熱力圖
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 5：熱力圖 ═══
     elif "熱力圖" in mod:
         st.subheader("🏫 跨年度科系×學校 熱力圖")
-
-        # 科系×年度 招生量熱力圖
         st.markdown("#### 科系×年度 招生量")
         dept_year_rows = []
         for yr, c in year_cache.items():
@@ -1444,13 +1488,11 @@ def render_cross_year():
             fig.update_layout(height=max(400, len(pv) * 30))
             st.plotly_chart(fig, use_container_width=True)
 
-        # 科系×學校 跨年度
         st.markdown("---"); st.markdown("#### 特定科系×學校 跨年度")
         all_depts = set()
         for yr, c in year_cache.items():
             dc = detect_dept_col(c["p1"])
-            if dc:
-                all_depts.update(c["p1"][dc].unique())
+            if dc: all_depts.update(c["p1"][dc].unique())
         if all_depts:
             sel = st.selectbox("選擇科系：", sorted(all_depts), key="cross_hm_dept")
             mn = st.slider("學校報名≥", 1, 20, 3, key="cross_hm_mn")
@@ -1470,13 +1512,9 @@ def render_cross_year():
                             fig.update_layout(height=max(300, len(cdf)*25))
                             st.plotly_chart(fig, use_container_width=True)
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 6：來源學校
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 6：來源學校 ═══
     elif "來源學校" in mod:
         st.subheader("🎯 跨年度來源學校追蹤")
-
-        # 學校忠誠度分析
         st.markdown("#### 學校出現頻率（跨年度忠誠度）")
         all_schools = {}
         for yr, c in year_cache.items():
@@ -1487,31 +1525,25 @@ def render_cross_year():
                         all_schools[sch] = {"學校": row["學校"], "出現年度數": 0, "年度明細": []}
                     all_schools[sch]["出現年度數"] += 1
                     all_schools[sch]["年度明細"].append(yr)
-
         if all_schools:
             loyalty = pd.DataFrame(all_schools.values())
             loyalty["年度明細"] = loyalty["年度明細"].apply(lambda x: ", ".join(x))
             loyalty = loyalty.sort_values("出現年度數", ascending=False)
-
             n_total = len(valid_years)
             loyal = loyalty[loyalty["出現年度數"] == n_total]
             partial = loyalty[(loyalty["出現年度數"] > 1) & (loyalty["出現年度數"] < n_total)]
             single = loyalty[loyalty["出現年度數"] == 1]
-
             c1, c2, c3 = st.columns(3)
             c1.metric("🏆 全年度都有", f"{len(loyal)} 校")
             c2.metric("📊 部分年度", f"{len(partial)} 校")
             c3.metric("🆕 僅出現一次", f"{len(single)} 校")
-
             fig = px.histogram(loyalty, x="出現年度數", nbins=n_total,
-                               title="學校出現頻率分布", labels={"出現年度數": "出現年度數"})
+                               title="學校出現頻率分布")
             fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
-
             with st.expander("🏆 全年度忠誠學校", expanded=False):
                 st.dataframe(loyal, use_container_width=True, hide_index=True)
 
-        # 新增/流失學校追蹤
         st.markdown("---"); st.markdown("#### 新增 & 流失學校追蹤")
         yr_list = list(year_cache.keys())
         if len(yr_list) >= 2:
@@ -1534,7 +1566,6 @@ def render_cross_year():
                             lost_data = prev_ss[prev_ss["學校"].apply(norm_school).isin(lost_schools)]
                             st.dataframe(lost_data.sort_values("一階人數", ascending=False), use_container_width=True, hide_index=True)
 
-        # 個別學校跨年度追蹤
         st.markdown("---"); st.markdown("#### 個別學校跨年度追蹤")
         all_sch_names = set()
         for yr, c in year_cache.items():
@@ -1566,13 +1597,9 @@ def render_cross_year():
             else:
                 st.info(f"「{sel_sch}」在選取的年度中無資料。")
 
-    # ═══════════════════════════════════════════════
-    # 跨年度 7：流失預警
-    # ═══════════════════════════════════════════════
+    # ═══ 跨年度 7：流失預警 ═══
     elif "流失" in mod:
         st.subheader("⚠️ 跨年度流失預警分析")
-
-        # 全校流失趨勢
         st.markdown("#### 全校流失趨勢")
         loss_summary = []
         for yr, c in year_cache.items():
@@ -1583,7 +1610,6 @@ def render_cross_year():
                                  "流失率(%)": round(100-rate, 1)})
         lsdf = pd.DataFrame(loss_summary)
         st.dataframe(lsdf, use_container_width=True, hide_index=True)
-
         fig = go.Figure()
         fig.add_trace(go.Bar(x=lsdf["年度"], y=lsdf["流失人數"], name="流失人數", marker_color="#f44336"))
         fig.add_trace(go.Scatter(x=lsdf["年度"], y=lsdf["流失率(%)"], name="流失率%",
@@ -1593,7 +1619,6 @@ def render_cross_year():
             yaxis2=dict(title="流失率(%)", overlaying="y", side="right", range=[0, 100]), height=450)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 科系流失跨年度
         st.markdown("---"); st.markdown("#### 科系流失跨年度比較")
         dept_loss_rows = []
         for yr, c in year_cache.items():
@@ -1602,27 +1627,21 @@ def render_cross_year():
                     dept_loss_rows.append({
                         "年度": yr, "科系": row["科系"],
                         "一階": int(row["一階人數"]), "最終": int(row["最終入學"]),
-                        "流失": int(row["流失人數"]),
-                        "一→最終(%)": row["一→最終(%)"]
+                        "流失": int(row["流失人數"]), "一→最終(%)": row["一→最終(%)"]
                     })
         if dept_loss_rows:
             dldf = pd.DataFrame(dept_loss_rows)
-
-            # 流失人數熱力圖
             pv_loss = dldf.pivot_table(index="科系", columns="年度", values="流失", aggfunc="first").fillna(0)
             fig = px.imshow(pv_loss, text_auto=True, aspect="auto",
                             color_continuous_scale="OrRd", title="科系×年度：流失人數")
             fig.update_layout(height=max(400, len(pv_loss)*30))
             st.plotly_chart(fig, use_container_width=True)
-
-            # 轉換率熱力圖
             pv_rate = dldf.pivot_table(index="科系", columns="年度", values="一→最終(%)", aggfunc="first").fillna(0)
             fig = px.imshow(pv_rate, text_auto=True, aspect="auto",
                             color_continuous_scale="RdYlGn", title="科系×年度：轉換率(%)")
             fig.update_layout(height=max(400, len(pv_rate)*30))
             st.plotly_chart(fig, use_container_width=True)
 
-        # 惡化偵測
         st.markdown("---"); st.markdown("#### 🚨 惡化偵測（轉換率下降的科系）")
         yr_list = list(year_cache.keys())
         if len(yr_list) >= 2 and dept_loss_rows:
@@ -1648,7 +1667,6 @@ def render_cross_year():
             else:
                 st.success("✅ 所有科系轉換率持平或上升！")
 
-        # 學校流失惡化
         st.markdown("---"); st.markdown("#### 🚨 學校流失惡化偵測")
         mn = st.slider("一階≥", 1, 50, 10, key="cross_loss_mn")
         if len(yr_list) >= 2:
@@ -1665,7 +1683,6 @@ def render_cross_year():
                 merged["變化"] = merged[f"一→最終(%)_{curr_yr}"] - merged[f"一→最終(%)_{prev_yr}"]
                 deteriorating_sch = merged[merged["變化"] < -5].sort_values("變化")
                 improving_sch = merged[merged["變化"] > 5].sort_values("變化", ascending=False)
-
                 c1, c2 = st.columns(2)
                 with c1:
                     st.markdown(f"**❌ 惡化學校（下降>5%）：{len(deteriorating_sch)} 校**")
@@ -1684,7 +1701,6 @@ def render_cross_year():
                     else:
                         st.info("無顯著改善")
 
-        # IPA 矩陣疊合
         st.markdown("---"); st.markdown("#### IPA 矩陣（跨年度疊合）")
         fig = go.Figure()
         colors = px.colors.qualitative.Set2
@@ -1726,6 +1742,6 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 ver = st.session_state.get("analysis_version", 0)
 st.markdown(
     '<div style="text-align:center;color:#aaa;font-size:.85rem;padding:10px;">'
-    '🎓 中華醫事科技大學 招生數據分析系統 v6.4<br>'
-    '跨年度七模組完整分析 ｜ 班級結構化解析 ｜ P1科系優先映射<br>'
+    '🎓 中華醫事科技大學 招生數據分析系統 v6.5<br>'
+    '縮寫展開引擎 ｜ 跨年度七模組分析 ｜ P1科系優先映射<br>'
     '分析版本 #' + str(ver) + '</div>', unsafe_allow_html=True)
