@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 中華醫事科技大學 招生數據分析系統 v6.8
-- 新增：各階段「實際人頭數 vs 志願次數」分析（解決一人填多科系重複計算問題）
+- 新增：各階段「實際人數 vs 志願次數」分析（解決一人填多科系重複計算問題）
 - 新增：自動偵測學生ID欄位（准考證號、學號、身分證字號等）
-- 新增：科系 × 人頭數交叉分析（去重後的真實科系分布）
-- 新增：總覽6 KPI → 9 KPI，含人頭數/志願次/重複率
+- 新增：科系 × 人數交叉分析（去重後的真實科系分布）
+- 新增：總覽6 KPI → 9 KPI，含人數/志願次/重複率
 - 保留：全年度惡化偵測、三段轉換率、縮寫展開引擎
 """
 
@@ -178,10 +178,10 @@ def compute_headcount_stats(df, id_col, dept_col=None):
     """
     計算人頭數統計：
     - 總列數（志願次數）
-    - 不重複人頭數
+    - 不重複人數
     - 重複率
     - 每人平均填報科系數
-    - 各科系的人頭數（去重後）
+    - 各科系的人數（去重後）
     """
     result = {}
     total_rows = len(df)
@@ -206,7 +206,7 @@ def compute_headcount_stats(df, id_col, dept_col=None):
             "id_col": id_col,
         }
 
-        # 各科系人頭數（去重）
+        # 各科系人數（去重）
         if dept_col and dept_col in df.columns:
             df_with_id = df[df[id_col].notna()].copy()
             df_with_id["_id_clean"] = df_with_id[id_col].astype(str).str.strip()
@@ -214,12 +214,12 @@ def compute_headcount_stats(df, id_col, dept_col=None):
             # 志願次數（不去重）
             dept_wish = df_with_id.groupby(dept_col).size().reset_index(name="志願次數")
 
-            # 人頭數（去重）
-            dept_head = df_with_id.groupby(dept_col)["_id_clean"].nunique().reset_index(name="人頭數")
+            # 人數（去重）
+            dept_head = df_with_id.groupby(dept_col)["_id_clean"].nunique().reset_index(name="人數")
 
             dept_stats = dept_wish.merge(dept_head, on=dept_col, how="outer").fillna(0)
             dept_stats["志願次數"] = dept_stats["志願次數"].astype(int)
-            dept_stats["人頭數"] = dept_stats["人頭數"].astype(int)
+            dept_stats["人數"] = dept_stats["人數"].astype(int)
             dept_stats["重複率(%)"] = np.where(
                 dept_stats["志願次數"] > 0,
                 ((dept_stats["志願次數"] - dept_stats["人頭數"]) / dept_stats["志願次數"] * 100).round(1),
@@ -474,7 +474,7 @@ def trend_arrow(current, previous):
 
 
 # ============================================================
-# 統計構建（含人頭數）
+# 統計構建（含人數）
 # ============================================================
 def get_dept_series(df, p1_depts=None):
     dc = detect_dept_col(df)
@@ -567,7 +567,7 @@ def build_dept_stats(p1, p2=None, p3=None):
 
 def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
     """
-    建立科系統計（含人頭數版本）
+    建立科系統計（含人數版本）
     id_cols = {"p1": id_col_name, "p2": ..., "p3": ...}
     """
     if id_cols is None:
@@ -596,7 +596,7 @@ def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
         rows.append({
             "_dept_std": dept_norm,
             "一階志願次數": wish_count,
-            "一階人頭數": head_count,
+            "一階人數": head_count,
         })
 
     base = pd.DataFrame(rows)
@@ -611,18 +611,18 @@ def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
             t2w = s2_aligned.value_counts().reset_index()
             t2w.columns = ["_dept_std", "二階志願次數"]
             base = base.merge(t2w, on="_dept_std", how="left")
-            # 人頭數
+            # 人數
             if id2 and id2 in p2.columns:
                 dc2 = detect_dept_col(p2)
                 if dc2:
                     p2c = p2.copy()
                     p2c["_dept_norm"] = p2c[dc2].apply(norm_dept).map(lambda x: align_dept_name(x, name_map))
                     t2h = p2c.groupby("_dept_norm")[id2].apply(lambda x: x.dropna().astype(str).str.strip().nunique()).reset_index()
-                    t2h.columns = ["_dept_std", "二階人頭數"]
+                    t2h.columns = ["_dept_std", "二階人數"]
                     base = base.merge(t2h, on="_dept_std", how="left")
 
     if "二階志願次數" not in base.columns: base["二階志願次數"] = np.nan
-    if "二階人頭數" not in base.columns: base["二階人頭數"] = np.nan
+    if "二階人數" not in base.columns: base["二階人數"] = np.nan
 
     # 最終
     if p3 is not None:
@@ -639,31 +639,31 @@ def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
                     p3c = p3.copy()
                     p3c["_dept_norm"] = p3c[dc3].apply(norm_dept).map(lambda x: align_dept_name(x, name_map))
                     t3h = p3c.groupby("_dept_norm")[id3].apply(lambda x: x.dropna().astype(str).str.strip().nunique()).reset_index()
-                    t3h.columns = ["_dept_std", "最終人頭數"]
+                    t3h.columns = ["_dept_std", "最終人數"]
                     base = base.merge(t3h, on="_dept_std", how="left")
 
     if "最終志願次數" not in base.columns: base["最終志願次數"] = np.nan
-    if "最終人頭數" not in base.columns: base["最終人頭數"] = np.nan
+    if "最終人數" not in base.columns: base["最終人數"] = np.nan
 
     # 填充
-    for c in ["二階志願次數", "二階人頭數", "最終志願次數", "最終人頭數"]:
+    for c in ["二階志願次數", "二階人數", "最終志願次數", "最終人數"]:
         base[c] = base[c].fillna(0).astype(int)
 
     # 重複率
     base["一階重複率(%)"] = np.where(
-        (base["一階人頭數"].notna()) & (base["一階志願次數"] > 0) & (base["一階人頭數"] > 0),
+        (base["一階人數"].notna()) & (base["一階志願次數"] > 0) & (base["一階人數"] > 0),
         ((base["一階志願次數"] - base["一階人頭數"]) / base["一階志願次數"] * 100).round(1), None)
     base["二階重複率(%)"] = np.where(
-        (base["二階人頭數"] > 0) & (base["二階志願次數"] > 0),
-        ((base["二階志願次數"] - base["二階人頭數"]) / base["二階志願次數"] * 100).round(1), None)
+        (base["二階人數"] > 0) & (base["二階志願次數"] > 0),
+        ((base["二階志願次數"] - base["二階人數"]) / base["二階志願次數"] * 100).round(1), None)
 
     base["科系"] = base["_dept_std"].map(name_map).fillna(base["_dept_std"])
     base = base.drop(columns=["_dept_std"])
 
     col_order = ["科系",
-                 "一階志願次數", "一階人頭數", "一階重複率(%)",
-                 "二階志願次數", "二階人頭數", "二階重複率(%)",
-                 "最終志願次數", "最終人頭數"]
+                 "一階志願次數", "一階人數", "一階重複率(%)",
+                 "二階志願次數", "二階人數", "二階重複率(%)",
+                 "最終志願次數", "最終人數"]
     base = base[[c for c in col_order if c in base.columns]]
     return base
 
@@ -1179,7 +1179,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
         '<div class="dedup-box">'
         '📌 <b>為什麼需要這個分析？</b><br>'
         '在一階和二階中，一位學生可能填報多個科系志願，導致「科系人數加總 > 實際人數」。<br>'
-        '此模組透過<b>學生ID</b>去重，顯示每個階段的<b>真實人頭數</b>。'
+        '此模組透過<b>學生ID</b>去重，顯示每個階段的<b>真實人數</b>。'
         '</div>', unsafe_allow_html=True)
 
     phases = [("一階", p1, id_cols.get("p1")),
@@ -1187,7 +1187,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
               ("最終", p3, id_cols.get("p3"))]
 
     # === 全校摘要 ===
-    st.markdown("#### 📊 全校各階段人頭數摘要")
+    st.markdown("#### 📊 全校各階段人數摘要")
 
     summary_rows = []
     phase_hc = {}
@@ -1195,7 +1195,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
         if df is None:
             summary_rows.append({
                 "階段": label, "總列數(志願次數)": "—", "學生ID欄位": "—",
-                "不重複人頭數": "—", "重複列數": "—", "重複率(%)": "—",
+                "不重複人數": "—", "重複列數": "—", "重複率(%)": "—",
                 "平均每人填報數": "—"
             })
             continue
@@ -1208,7 +1208,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                 "階段": label,
                 "總列數(志願次數)": hc["total_rows"],
                 "學生ID欄位": hc["id_col"],
-                "不重複人頭數": hc["unique_headcount"],
+                "不重複人數": hc["unique_headcount"],
                 "重複列數": hc["dup_count"],
                 "重複率(%)": hc["dup_rate"],
                 "平均每人填報數": hc["avg_entries_per_person"],
@@ -1218,7 +1218,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                 "階段": label,
                 "總列數(志願次數)": hc["total_rows"],
                 "學生ID欄位": "⚠️ 無ID欄位",
-                "不重複人頭數": f"⚠️ 無法計算（{hc['total_rows']}列）",
+                "不重複人數": f"⚠️ 無法計算（{hc['total_rows']}列）",
                 "重複列數": "—", "重複率(%)": "—", "平均每人填報數": "—",
             })
 
@@ -1239,11 +1239,11 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                     f'<h3>列數 {hc["total_rows"]:,} ｜ 重複率 {hc["dup_rate"]}%</h3>'
                     f'</div>', unsafe_allow_html=True)
 
-    # === 人頭數 vs 志願次數漏斗 ===
+    # === 人數 vs 志願次數漏斗 ===
     has_headcount = any(phase_hc.get(l, {}).get("unique_headcount") is not None for l in ["一階", "二階", "最終"])
     if has_headcount:
         st.markdown("---")
-        st.markdown("#### 🔄 人頭數漏斗 vs 志願次數漏斗")
+        st.markdown("#### 🔄 人數漏斗 vs 志願次數漏斗")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -1254,7 +1254,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                     fl.append(f"{label}人頭")
                     fv.append(hc["unique_headcount"])
             if len(fv) > 1:
-                st.plotly_chart(fig_funnel(fl, fv, "人頭數漏斗（去重）"), use_container_width=True)
+                st.plotly_chart(fig_funnel(fl, fv, "人數漏斗（去重）"), use_container_width=True)
 
         with c2:
             fl2, fv2 = [], []
@@ -1266,8 +1266,8 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
             if len(fv2) > 1:
                 st.plotly_chart(fig_funnel(fl2, fv2, "志願次數漏斗（含重複）"), use_container_width=True)
 
-        # 人頭數轉換率
-        st.markdown("#### 📈 人頭數轉換率 vs 列數轉換率")
+        # 人數轉換率
+        st.markdown("#### 📈 人數轉換率 vs 志願次數轉換率")
         tr_rows = []
         p_labels = ["一階", "二階", "最終"]
         for i in range(len(p_labels) - 1):
@@ -1280,13 +1280,13 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                 head_to = hc_to.get("unique_headcount")
 
                 r = {"轉換": f"{p_labels[i]} → {p_labels[i+1]}",
-                     "列數轉換率(%)": safe_pct(row_to, row_from)}
+                     "志願次數轉換率(%)": safe_pct(row_to, row_from)}
                 if head_from and head_to:
-                    r["人頭數轉換率(%)"] = safe_pct(head_to, head_from)
-                    r["差異"] = round(r["人頭數轉換率(%)"] - r["列數轉換率(%)"], 1)
-                    r["說明"] = "人頭數轉換率較高→列數因重複被稀釋" if r["差異"] > 0 else "列數轉換率較高→下一階重複數增加"
+                    r["人數轉換率(%)"] = safe_pct(head_to, head_from)
+                    r["差異"] = round(r["人數轉換率(%)"] - r["志願次數轉換率(%)"], 1)
+                    r["說明"] = "人數轉換率較高→志願次數因重複被稀釋" if r["差異"] > 0 else "志願次數轉換率較高→下一階重複數增加"
                 else:
-                    r["人頭數轉換率(%)"] = "—"
+                    r["人數轉換率(%)"] = "—"
                     r["差異"] = "—"
                     r["說明"] = "無法計算（缺少ID欄位）"
                 tr_rows.append(r)
@@ -1309,19 +1309,19 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                 "一階志願次數" if "一階志願次數" in hc_dept.columns else hc_dept.columns[1],
                 ascending=False), use_container_width=True, hide_index=True)
 
-            # 一階：志願次數 vs 人頭數比較
-            if "一階人頭數" in hc_dept.columns and hc_dept["一階人頭數"].notna().any():
-                valid_dept = hc_dept[hc_dept["一階人頭數"].notna() & (hc_dept["一階人頭數"] > 0)].copy()
+            # 一階：志願次數 vs 人數比較
+            if "一階人數" in hc_dept.columns and hc_dept["一階人數"].notna().any():
+                valid_dept = hc_dept[hc_dept["一階人數"].notna() & (hc_dept["一階人數"] > 0)].copy()
                 if not valid_dept.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Bar(
                         name="志願次數", y=valid_dept["科系"], x=valid_dept["一階志願次數"],
                         orientation="h", marker_color="#2196F3"))
                     fig.add_trace(go.Bar(
-                        name="人頭數", y=valid_dept["科系"], x=valid_dept["一階人頭數"],
+                        name="人數", y=valid_dept["科系"], x=valid_dept["一階人數"],
                         orientation="h", marker_color="#4CAF50"))
                     fig.update_layout(barmode="group",
-                                      title="一階：志願次數 vs 人頭數（各科系）",
+                                      title="一階：志願次數 vs 人數（各科系）",
                                       height=max(400, len(valid_dept) * 30),
                                       yaxis=dict(autorange="reversed"))
                     st.plotly_chart(fig, use_container_width=True)
@@ -1341,26 +1341,26 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                             st.plotly_chart(fig2, use_container_width=True)
 
             # 全階段對照
-            if all(c in hc_dept.columns for c in ["一階人頭數", "最終人頭數"]):
-                valid_all = hc_dept[(hc_dept["一階人頭數"].notna()) & (hc_dept["一階人頭數"] > 0)].copy()
-                if not valid_all.empty and valid_all["最終人頭數"].sum() > 0:
+            if all(c in hc_dept.columns for c in ["一階人數", "最終人數"]):
+                valid_all = hc_dept[(hc_dept["一階人數"].notna()) & (hc_dept["一階人數"] > 0)].copy()
+                if not valid_all.empty and valid_all["最終人數"].sum() > 0:
                     st.markdown("---")
-                    st.markdown("#### 🎯 人頭數三段轉換率（去重後）")
+                    st.markdown("#### 🎯 人數三段轉換率（去重後）")
                     valid_all["人頭一→最終(%)"] = np.where(
-                        valid_all["一階人頭數"] > 0,
-                        (valid_all["最終人頭數"] / valid_all["一階人頭數"] * 100).round(1), 0)
-                    if "二階人頭數" in valid_all.columns:
+                        valid_all["一階人數"] > 0,
+                        (valid_all["最終人數"] / valid_all["一階人數"] * 100).round(1), 0)
+                    if "二階人數" in valid_all.columns:
                         valid_all["人頭一→二(%)"] = np.where(
-                            valid_all["一階人頭數"] > 0,
-                            (valid_all["二階人頭數"] / valid_all["一階人頭數"] * 100).round(1), 0)
-                        valid_all["人頭二→最終(%)"] = np.where(
-                            valid_all["二階人頭數"] > 0,
-                            (valid_all["最終人頭數"] / valid_all["二階人頭數"] * 100).round(1), 0)
-                    display_cols = ["科系", "一階人頭數"]
-                    if "二階人頭數" in valid_all.columns:
-                        display_cols.extend(["二階人頭數", "人頭一→二(%)", "人頭二→最終(%)"])
-                    display_cols.extend(["最終人頭數", "人頭一→最終(%)"])
-                    st.dataframe(valid_all[display_cols].sort_values("人頭一→最終(%)", ascending=False),
+                            valid_all["一階人數"] > 0,
+                            (valid_all["二階人數"] / valid_all["一階人數"] * 100).round(1), 0)
+                        valid_all["人二→最終(%)"] = np.where(
+                            valid_all["二階人數"] > 0,
+                            (valid_all["最終人數"] / valid_all["二階人數"] * 100).round(1), 0)
+                    display_cols = ["科系", "一階人數"]
+                    if "二階人數" in valid_all.columns:
+                        display_cols.extend(["二階人數", "人數一→二(%)", "人數二→最終(%)"])
+                    display_cols.extend(["最終人數", "人數一→最終(%)"])
+                    st.dataframe(valid_all[display_cols].sort_values("人數一→最終(%)", ascending=False),
                                  use_container_width=True, hide_index=True)
     else:
         st.info("⚠️ 一階未偵測到科系欄位，無法進行科系人頭數分析。")
@@ -1452,7 +1452,7 @@ def render_year_analysis(yr):
     if p1 is None:
         st.warning(f"⚠️ {yr}：一階資料未指定或無法讀取。")
         return
-    mod_opts = ["📊 總覽儀表板", "👤 人頭數分析", "🔄 招生漏斗", "📈 入學管道",
+    mod_opts = ["📊 總覽儀表板", "👤 人數分析", "🔄 招生漏斗", "📈 入學管道",
                 "🗺️ 地理分布", "🏫 科系熱力圖", "🎯 來源學校", "⚠️ 流失預警"]
     mod = st.radio("選擇分析模組：", mod_opts, horizontal=True, key=f"mod_{yr}")
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
@@ -1460,8 +1460,8 @@ def render_year_analysis(yr):
     n2 = len(p2) if p2 is not None else None
     n3 = len(p3) if p3 is not None else None
 
-    # ─── v6.8 人頭數分析 ───
-    if "人頭數" in mod:
+    # ─── v6.8 人數分析 ───
+    if "人數" in mod:
         render_headcount_analysis(yr, p1, p2, p3, id_cols)
         return
 
@@ -1469,7 +1469,7 @@ def render_year_analysis(yr):
     if "總覽" in mod:
         st.subheader(f"📊 {yr} — 總覽儀表板")
 
-        # 計算人頭數
+        # 計算人數
         hc_summary = {}
         for phase_key, df_phase in [("p1", p1), ("p2", p2), ("p3", p3)]:
             if df_phase is not None:
@@ -1497,34 +1497,34 @@ def render_year_analysis(yr):
             r = f"{n3/n1*100:.1f}%" if n3 and n1 else "—"
             st.markdown(f'<div class="metric-card metric-gold"><h3>一→最終(列)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
 
-        # 第二排：人頭數
+        # 第二排：人數
         any_hc = any(hc_summary.get(k, {}).get("unique_headcount") is not None for k in ["p1", "p2", "p3"])
         if any_hc:
-            st.markdown("##### 👤 人頭數（去重後）")
+            st.markdown("##### 👤 人數（去重後）")
             cols2 = st.columns(6)
             hc1_n = hc_summary.get("p1", {}).get("unique_headcount")
             hc2_n = hc_summary.get("p2", {}).get("unique_headcount")
             hc3_n = hc_summary.get("p3", {}).get("unique_headcount")
             with cols2[0]:
                 v = f"{hc1_n:,}" if hc1_n else "—"
-                st.markdown(f'<div class="metric-card metric-cyan"><h3>一階人頭數</h3><h1>{v}</h1></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card metric-cyan"><h3>一階人數</h3><h1>{v}</h1></div>', unsafe_allow_html=True)
             with cols2[1]:
                 v = f"{hc2_n:,}" if hc2_n else "—"
-                st.markdown(f'<div class="metric-card metric-red"><h3>二階人頭數</h3><h1>{v}</h1></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card metric-red"><h3>二階人數</h3><h1>{v}</h1></div>', unsafe_allow_html=True)
             with cols2[2]:
                 v = f"{hc3_n:,}" if hc3_n else "—"
-                st.markdown(f'<div class="metric-card metric-lime"><h3>最終人頭數</h3><h1>{v}</h1></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card metric-lime"><h3>最終人數</h3><h1>{v}</h1></div>', unsafe_allow_html=True)
             with cols2[3]:
                 r = f"{hc2_n/hc1_n*100:.1f}%" if hc1_n and hc2_n else "—"
-                st.markdown(f'<div class="metric-card metric-teal"><h3>一→二階(人頭)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card metric-teal"><h3>一→二階(人數)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
             with cols2[4]:
                 r = f"{hc3_n/hc2_n*100:.1f}%" if hc2_n and hc3_n else "—"
-                st.markdown(f'<div class="metric-card metric-purple"><h3>二→最終(人頭)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card metric-purple"><h3>二→最終(人數)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
             with cols2[5]:
                 r = f"{hc3_n/hc1_n*100:.1f}%" if hc1_n and hc3_n else "—"
-                st.markdown(f'<div class="metric-card metric-gold"><h3>一→最終(人頭)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card metric-gold"><h3>一→最終(人數)</h3><h1>{r}</h1></div>', unsafe_allow_html=True)
 
-            # 列數 vs 人頭數比較提示
+            # 列數 vs 人數比較提示
             if hc1_n and n1 and hc1_n != n1:
                 dup = n1 - hc1_n
                 st.markdown(
@@ -1756,7 +1756,7 @@ def render_cross_year():
     st.header("📊 跨年度比較分析")
     if len(valid_years) < 2: st.warning("⚠️ 需要至少 2 個年度。"); return
 
-    mod_opts = ["📊 總覽儀表板", "👤 人頭數趨勢", "🔄 招生漏斗", "📈 入學管道",
+    mod_opts = ["📊 總覽儀表板", "👤 人數趨勢", "🔄 招生漏斗", "📈 入學管道",
                 "🗺️ 地理分布", "🏫 科系熱力圖", "🎯 來源學校", "⚠️ 流失預警"]
     mod = st.radio("選擇跨年度分析模組：", mod_opts, horizontal=True, key="cross_mod")
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
@@ -1769,7 +1769,7 @@ def render_cross_year():
         result = build_dept_stats(p1, p2, p3)
         ds = result[0] if result and result[0] is not None else None
         ss = build_school_stats(p1, p2, p3)
-        # 人頭數
+        # 人數
         hc_info = {}
         for pk, dfp in [("p1", p1), ("p2", p2), ("p3", p3)]:
             if dfp is not None:
@@ -1783,7 +1783,7 @@ def render_cross_year():
     yr_list = list(year_cache.keys())
 
     # ═══ 跨年度 ：總覽 ═══
-    if "總覽" in mod and "人頭" not in mod:
+    if "總覽" in mod and "人數" not in mod:
         st.subheader("📊 跨年度總覽比較")
         summaries = []
         for yr, c in year_cache.items():
@@ -1794,17 +1794,17 @@ def render_cross_year():
                 "二→最終(%)(列)": safe_pct(c["n3"], c["n2"]),
                 "一→最終(%)(列)": safe_pct(c["n3"], c["n1"]),
             }
-            # 人頭數
+            # 人數
             hc = c.get("hc", {})
             for pk, label in [("p1", "一階"), ("p2", "二階"), ("p3", "最終")]:
                 hci = hc.get(pk, {})
                 n = hci.get("unique_headcount")
-                row[f"{label}人頭數"] = n if n else "—"
+                row[f"{label}人數"] = n if n else "—"
             hc1 = hc.get("p1", {}).get("unique_headcount")
             hc2 = hc.get("p2", {}).get("unique_headcount")
             hc3 = hc.get("p3", {}).get("unique_headcount")
-            row["一→二階(%)(人頭)"] = safe_pct(hc2, hc1) if hc1 and hc2 else "—"
-            row["一→最終(%)(人頭)"] = safe_pct(hc3, hc1) if hc1 and hc3 else "—"
+            row["一→二階(%)(人數)"] = safe_pct(hc2, hc1) if hc1 and hc2 else "—"
+            row["一→最終(%)(人數)"] = safe_pct(hc3, hc1) if hc1 and hc3 else "—"
             summaries.append(row)
         sdf = pd.DataFrame(summaries)
         st.dataframe(sdf, use_container_width=True, hide_index=True)
@@ -1815,14 +1815,14 @@ def render_cross_year():
             fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["二階列數"], name="二階列數", marker_color="#FF9800"))
         if sdf["最終入學"].sum() > 0:
             fig.add_trace(go.Bar(x=sdf["年度"], y=sdf["最終入學"], name="最終入學", marker_color="#4CAF50"))
-        # 人頭數線
-        hc1_vals = [s.get("一階人頭數") for s in summaries]
+        # 人數線
+        hc1_vals = [s.get("一階人數") for s in summaries]
         if any(isinstance(v, int) for v in hc1_vals):
             fig.add_trace(go.Scatter(
                 x=sdf["年度"], y=[v if isinstance(v, int) else None for v in hc1_vals],
-                name="一階人頭數", mode="lines+markers", line=dict(dash="dot", width=3, color="#E91E63"),
+                name="一階人數", mode="lines+markers", line=dict(dash="dot", width=3, color="#E91E63"),
                 marker=dict(size=12, symbol="diamond")))
-        fig.update_layout(barmode="group", title="各年度招生量（列數 vs 人頭數）", height=450)
+        fig.update_layout(barmode="group", title="各年度招生量（列數 vs 人數）", height=450)
         st.plotly_chart(fig, use_container_width=True)
 
         rate_fig = fig_three_rates_trend(
@@ -1833,12 +1833,12 @@ def render_cross_year():
             "全校三段轉換率趨勢（列數）")
         if rate_fig: st.plotly_chart(rate_fig, use_container_width=True)
 
-    # ═══ 跨年度：人頭數趨勢 ═══
+    # ═══ 跨年度：人數趨勢 ═══
     elif "人頭" in mod:
-        st.subheader("👤 跨年度人頭數趨勢分析")
+        st.subheader("👤 跨年度人數趨勢分析")
         st.markdown(
             '<div class="dedup-box">'
-            '📌 此模組比較各年度各階段的「真實人頭數」變化，'
+            '📌 此模組比較各年度各階段的「真實人數」變化，'
             '排除一人多志願造成的列數膨脹。'
             '</div>', unsafe_allow_html=True)
 
@@ -1848,7 +1848,7 @@ def render_cross_year():
             row = {"年度": yr, "一階列數": c["n1"], "二階列數": c["n2"], "最終列數": c["n3"]}
             for pk, label in [("p1", "一階"), ("p2", "二階"), ("p3", "最終")]:
                 hci = hc.get(pk, {})
-                row[f"{label}人頭數"] = hci.get("unique_headcount")
+                row[f"{label}人數"] = hci.get("unique_headcount")
                 row[f"{label}重複率(%)"] = hci.get("dup_rate")
                 row[f"{label}平均填報數"] = hci.get("avg_entries_per_person")
             hc_rows.append(row)
@@ -1858,15 +1858,15 @@ def render_cross_year():
         # 趨勢圖
         fig = go.Figure()
         for label, color, dash in [
-            ("一階列數", "#2196F3", "solid"), ("一階人頭數", "#1565C0", "dot"),
-            ("最終列數", "#4CAF50", "solid"), ("最終人頭數", "#2E7D32", "dot")]:
+            ("一階列數", "#2196F3", "solid"), ("一階人數", "#1565C0", "dot"),
+            ("最終列數", "#4CAF50", "solid"), ("最終人數", "#2E7D32", "dot")]:
             vals = hcdf[label].tolist() if label in hcdf.columns else []
             if any(v is not None and v > 0 for v in vals):
                 fig.add_trace(go.Scatter(
                     x=hcdf["年度"], y=vals, name=label,
                     mode="lines+markers", line=dict(dash=dash, width=3, color=color),
                     marker=dict(size=10)))
-        fig.update_layout(title="列數 vs 人頭數趨勢", height=450, yaxis_title="人數")
+        fig.update_layout(title="列數 vs 人數趨勢", height=450, yaxis_title="人數")
         st.plotly_chart(fig, use_container_width=True)
 
         # 重複率趨勢
@@ -1885,8 +1885,8 @@ def render_cross_year():
             fig.update_layout(title="各階段重複率趨勢", height=400, yaxis_title="重複率(%)")
             st.plotly_chart(fig, use_container_width=True)
 
-        # 人頭數轉換率
-        st.markdown("---"); st.markdown("#### 🎯 人頭數轉換率 vs 列數轉換率（跨年度）")
+        # 人數轉換率
+        st.markdown("---"); st.markdown("#### 🎯 人數轉換率 vs 列數轉換率（跨年度）")
         compare_rows = []
         for yr, c in year_cache.items():
             hc = c.get("hc", {})
@@ -1895,18 +1895,18 @@ def render_cross_year():
             compare_rows.append({
                 "年度": yr,
                 "列數一→最終(%)": safe_pct(c["n3"], c["n1"]),
-                "人頭一→最終(%)": safe_pct(hc3, hc1) if hc1 and hc3 else None,
-                "差異(人頭-列數)": round(safe_pct(hc3, hc1) - safe_pct(c["n3"], c["n1"]), 1) if hc1 and hc3 else None,
+                "人數一→最終(%)": safe_pct(hc3, hc1) if hc1 and hc3 else None,
+                "差異(人數-列數)": round(safe_pct(hc3, hc1) - safe_pct(c["n3"], c["n1"]), 1) if hc1 and hc3 else None,
             })
         cdf = pd.DataFrame(compare_rows)
         st.dataframe(cdf, use_container_width=True, hide_index=True)
 
         fig = go.Figure()
         fig.add_trace(go.Bar(x=cdf["年度"], y=cdf["列數一→最終(%)"], name="列數轉換率", marker_color="#2196F3"))
-        hv = cdf["人頭一→最終(%)"].tolist()
+        hv = cdf["人數一→最終(%)"].tolist()
         if any(v is not None for v in hv):
             fig.add_trace(go.Bar(x=cdf["年度"], y=hv, name="人頭數轉換率", marker_color="#4CAF50"))
-        fig.update_layout(barmode="group", title="一→最終 轉換率比較（列數 vs 人頭數）", height=400)
+        fig.update_layout(barmode="group", title="一→最終 轉換率比較（列數 vs 人數數）", height=400)
         st.plotly_chart(fig, use_container_width=True)
 
     # ═══ 跨年度：漏斗 ═══
@@ -2150,5 +2150,5 @@ ver = st.session_state.get("analysis_version", 0)
 st.markdown(
     '<div style="text-align:center;color:#aaa;font-size:.85rem;padding:10px;">'
     '🎓 中華醫事科技大學 招生數據分析系統 v6.8<br>'
-    '人頭數 vs 志願次數引擎 ｜ 全年度惡化偵測 ｜ 三段轉換率 ｜ 縮寫展開引擎<br>'
+    '人數 vs 志願次數引擎 ｜ 全年度惡化偵測 ｜ 三段轉換率 ｜ 縮寫展開引擎<br>'
     '分析版本 #' + str(ver) + '</div>', unsafe_allow_html=True)
