@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-中華醫事科技大學 招生數據分析系統 v6.8
-- 新增：各階段「實際人數 vs 志願次數」分析（解決一人填多科系重複計算問題）
-- 新增：自動偵測學生ID欄位（准考證號、學號、身分證字號等）
-- 新增：科系 × 人數交叉分析（去重後的真實科系分布）
-- 新增：總覽6 KPI → 9 KPI，含人數/志願次/重複率
+中華醫事科技大學 招生數據分析系統 v6.9
+- 修復：統一「人數」顯示（取代「人頭數」）
+- 修復：欄位名稱一致性（compute_headcount_stats / build_dept_stats_headcount）
+- 修復：跨年度「人數趨勢」模組可達性
+- 修復：人數三段轉換率欄位名稱一致
+- 修復：一階人數 fillna/astype 處理
 - 保留：全年度惡化偵測、三段轉換率、縮寫展開引擎
 """
 
@@ -74,7 +75,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">🎓 中華醫事科技大學 招生數據分析系統</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Enrollment Analytics v6.8 ｜ 人數 vs 志願次數 ｜ 全年度惡化偵測 ｜ 三段轉換率</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Enrollment Analytics v6.9 ｜ 人數 vs 志願次數 ｜ 全年度惡化偵測 ｜ 三段轉換率</div>', unsafe_allow_html=True)
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
 # ============================================================
@@ -153,23 +154,25 @@ DEPT_ALIAS = {
 }
 
 # ============================================================
-# v6.8 學生ID偵測引擎
+# v6.9 學生ID偵測引擎
 # ============================================================
 def detect_student_id_col(df):
     """自動偵測學生唯一識別欄位"""
+    # 第一輪：精確關鍵字匹配
     for kw in STUDENT_ID_KEYWORDS:
         for c in df.columns:
             if kw in str(c):
                 nuniq = df[c].dropna().nunique()
                 total = df[c].dropna().shape[0]
-                if nuniq > 0 and nuniq / total >= 0.5:
+                if nuniq > 0 and total > 0 and nuniq / total >= 0.5:
                     return c
+    # 第二輪：不區分大小寫匹配
     for c in df.columns:
         s = str(c).strip().lower()
-        if any(k in s for k in ["准考", "學號", "身分證", "身份證", "考生", "student", "exam"]):
+        if any(k.lower() in s for k in ["准考", "學號", "身分證", "身份證", "考生", "student", "exam"]):
             nuniq = df[c].dropna().nunique()
             total = df[c].dropna().shape[0]
-            if nuniq > 0 and nuniq / total >= 0.5:
+            if nuniq > 0 and total > 0 and nuniq / total >= 0.5:
                 return c
     return None
 
@@ -220,6 +223,7 @@ def compute_headcount_stats(df, id_col, dept_col=None):
             dept_stats = dept_wish.merge(dept_head, on=dept_col, how="outer").fillna(0)
             dept_stats["志願次數"] = dept_stats["志願次數"].astype(int)
             dept_stats["人數"] = dept_stats["人數"].astype(int)
+            # ★ 修復：使用正確的欄位名稱「人數」
             dept_stats["重複率(%)"] = np.where(
                 dept_stats["志願次數"] > 0,
                 ((dept_stats["志願次數"] - dept_stats["人數"]) / dept_stats["志願次數"] * 100).round(1),
@@ -453,9 +457,12 @@ def enrich_geo(df, geo):
 
 
 def eff_stars(r):
-    if r >= 70: return "⭐⭐⭐"
-    elif r >= 40: return "⭐⭐"
-    else: return "⭐"
+    if r >= 70:
+        return "⭐⭐⭐"
+    elif r >= 40:
+        return "⭐⭐"
+    else:
+        return "⭐"
 
 
 def safe_pct(num, den):
@@ -465,12 +472,16 @@ def safe_pct(num, den):
 
 
 def trend_arrow(current, previous):
-    if previous == 0: return "—"
+    if previous == 0:
+        return "—"
     diff = current - previous
     pct = diff / previous * 100
-    if pct > 5: return f'<span class="trend-up">▲ +{pct:.1f}%</span>'
-    elif pct < -5: return f'<span class="trend-down">▼ {pct:.1f}%</span>'
-    else: return f'<span class="trend-flat">► {pct:+.1f}%</span>'
+    if pct > 5:
+        return f'<span class="trend-up">▲ +{pct:.1f}%</span>'
+    elif pct < -5:
+        return f'<span class="trend-down">▼ {pct:.1f}%</span>'
+    else:
+        return f'<span class="trend-flat">► {pct:+.1f}%</span>'
 
 
 # ============================================================
@@ -499,12 +510,15 @@ def align_dept_name(norm_name, p1_name_map):
     core = re.sub(r'(學位學程|學程|系|科)$', '', norm_name)
     for p1_norm in p1_name_map:
         p1_core = re.sub(r'(學位學程|學程|系|科)$', '', p1_norm)
-        if core == p1_core: return p1_norm
-        if len(core) >= 3 and (core in p1_core or p1_core in core): return p1_norm
+        if core == p1_core:
+            return p1_norm
+        if len(core) >= 3 and (core in p1_core or p1_core in core):
+            return p1_norm
     if len(core) >= 2:
         short = core[:2]
         for p1_norm in p1_name_map:
-            if short in p1_norm: return p1_norm
+            if short in p1_norm:
+                return p1_norm
     return norm_name
 
 
@@ -589,10 +603,9 @@ def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
     p1c["_dept_norm"] = p1c[dc1].apply(norm_dept)
     for dept_norm, grp in p1c.groupby("_dept_norm"):
         wish_count = len(grp)
+        head_count = None
         if id1 and id1 in grp.columns:
             head_count = grp[id1].dropna().astype(str).str.strip().nunique()
-        else:
-            head_count = None
         rows.append({
             "_dept_std": dept_norm,
             "一階志願次數": wish_count,
@@ -617,12 +630,16 @@ def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
                 if dc2:
                     p2c = p2.copy()
                     p2c["_dept_norm"] = p2c[dc2].apply(norm_dept).map(lambda x: align_dept_name(x, name_map))
-                    t2h = p2c.groupby("_dept_norm")[id2].apply(lambda x: x.dropna().astype(str).str.strip().nunique()).reset_index()
+                    t2h = p2c.groupby("_dept_norm")[id2].apply(
+                        lambda x: x.dropna().astype(str).str.strip().nunique()
+                    ).reset_index()
                     t2h.columns = ["_dept_std", "二階人數"]
                     base = base.merge(t2h, on="_dept_std", how="left")
 
-    if "二階志願次數" not in base.columns: base["二階志願次數"] = np.nan
-    if "二階人數" not in base.columns: base["二階人數"] = np.nan
+    if "二階志願次數" not in base.columns:
+        base["二階志願次數"] = np.nan
+    if "二階人數" not in base.columns:
+        base["二階人數"] = np.nan
 
     # 最終
     if p3 is not None:
@@ -638,24 +655,36 @@ def build_dept_stats_headcount(p1, p2=None, p3=None, id_cols=None):
                 if dc3:
                     p3c = p3.copy()
                     p3c["_dept_norm"] = p3c[dc3].apply(norm_dept).map(lambda x: align_dept_name(x, name_map))
-                    t3h = p3c.groupby("_dept_norm")[id3].apply(lambda x: x.dropna().astype(str).str.strip().nunique()).reset_index()
+                    t3h = p3c.groupby("_dept_norm")[id3].apply(
+                        lambda x: x.dropna().astype(str).str.strip().nunique()
+                    ).reset_index()
                     t3h.columns = ["_dept_std", "最終人數"]
                     base = base.merge(t3h, on="_dept_std", how="left")
 
-    if "最終志願次數" not in base.columns: base["最終志願次數"] = np.nan
-    if "最終人數" not in base.columns: base["最終人數"] = np.nan
+    if "最終志願次數" not in base.columns:
+        base["最終志願次數"] = np.nan
+    if "最終人數" not in base.columns:
+        base["最終人數"] = np.nan
 
-    # 填充
+    # 填充數值欄位
     for c in ["二階志願次數", "二階人數", "最終志願次數", "最終人數"]:
         base[c] = base[c].fillna(0).astype(int)
 
-    # 重複率
+    # ★ 修復：一階人數也需要 fillna 處理
+    if base["一階人數"].notna().any():
+        base["一階人數"] = base["一階人數"].fillna(0).astype(int)
+
+    # ★ 修復：使用正確的欄位名稱「一階人數」
     base["一階重複率(%)"] = np.where(
         (base["一階人數"].notna()) & (base["一階志願次數"] > 0) & (base["一階人數"] > 0),
-        ((base["一階志願次數"] - base["一階人數"]) / base["一階志願次數"] * 100).round(1), None)
+        ((base["一階志願次數"] - base["一階人數"]) / base["一階志願次數"] * 100).round(1),
+        None
+    )
     base["二階重複率(%)"] = np.where(
         (base["二階人數"] > 0) & (base["二階志願次數"] > 0),
-        ((base["二階志願次數"] - base["二階人數"]) / base["二階志願次數"] * 100).round(1), None)
+        ((base["二階志願次數"] - base["二階人數"]) / base["二階志願次數"] * 100).round(1),
+        None
+    )
 
     base["科系"] = base["_dept_std"].map(name_map).fillna(base["_dept_std"])
     base = base.drop(columns=["_dept_std"])
@@ -685,7 +714,8 @@ def build_school_stats(p1, p2=None, p3=None):
             t2 = tmp2["_sch_std"].value_counts().reset_index()
             t2.columns = ["_sch_std", "二階人數"]
             s = s.merge(t2, on="_sch_std", how="left")
-    if "二階人數" not in s.columns: s["二階人數"] = np.nan
+    if "二階人數" not in s.columns:
+        s["二階人數"] = np.nan
 
     if p3 is not None:
         sc3 = detect_school_col(p3)
@@ -695,7 +725,8 @@ def build_school_stats(p1, p2=None, p3=None):
             t3 = tmp3["_sch_std"].value_counts().reset_index()
             t3.columns = ["_sch_std", "最終入學"]
             s = s.merge(t3, on="_sch_std", how="left")
-    if "最終入學" not in s.columns: s["最終入學"] = np.nan
+    if "最終入學" not in s.columns:
+        s["最終入學"] = np.nan
 
     s["二階人數"] = s["二階人數"].fillna(0).astype(int)
     s["最終入學"] = s["最終入學"].fillna(0).astype(int)
@@ -748,7 +779,8 @@ def fig_map(df, size_col, title, color_col=None):
     if "lat" not in df.columns or "lon" not in df.columns:
         return None
     m = df.dropna(subset=["lat", "lon"]).copy()
-    if m.empty: return None
+    if m.empty:
+        return None
     m[size_col] = pd.to_numeric(m[size_col], errors="coerce").fillna(1)
     sc = detect_school_col(m)
     fig = px.scatter_mapbox(
@@ -781,7 +813,8 @@ def fig_heatmap(df, x, y, v, title):
 
 def fig_three_rates_bar(df, y_col, title):
     rate_cols = [c for c in ["一→二階(%)", "二→最終(%)", "一→最終(%)"] if c in df.columns]
-    if not rate_cols: return None
+    if not rate_cols:
+        return None
     return fig_grouped_bar(df.sort_values(rate_cols[-1], ascending=True), y_col, rate_cols, title)
 
 
@@ -809,17 +842,23 @@ def fig_three_rates_trend(sdf, title):
 # ============================================================
 def detect_deterioration_full(data_by_year, metric, entity_col, min_count=0, min_p2=False):
     yr_list = sorted(data_by_year.keys())
-    if len(yr_list) < 2: return [], []
+    if len(yr_list) < 2:
+        return [], []
     entity_series = {}
     for yr in yr_list:
         df = data_by_year[yr]
-        if df is None or df.empty: continue
-        if min_p2 and "二階人數" in df.columns: df = df[df["二階人數"] > 0]
-        if min_count > 0 and "一階人數" in df.columns: df = df[df["一階人數"] >= min_count]
+        if df is None or df.empty:
+            continue
+        if min_p2 and "二階人數" in df.columns:
+            df = df[df["二階人數"] > 0]
+        if min_count > 0 and "一階人數" in df.columns:
+            df = df[df["一階人數"] >= min_count]
         for _, row in df.iterrows():
             ent = row[entity_col]
-            if ent not in entity_series: entity_series[ent] = {}
-            if metric in row.index: entity_series[ent][yr] = row[metric]
+            if ent not in entity_series:
+                entity_series[ent] = {}
+            if metric in row.index:
+                entity_series[ent][yr] = row[metric]
 
     pair_results = []
     for i in range(len(yr_list) - 1):
@@ -837,14 +876,17 @@ def detect_deterioration_full(data_by_year, metric, entity_col, min_count=0, min
     consecutive_results = []
     for ent, vals in entity_series.items():
         sorted_yrs = [y for y in yr_list if y in vals]
-        if len(sorted_yrs) < 2: continue
-        consec_count = 0; drops = []
+        if len(sorted_yrs) < 2:
+            continue
+        consec_count = 0
+        drops = []
         for i in range(len(sorted_yrs) - 1):
             if vals[sorted_yrs[i + 1]] < vals[sorted_yrs[i]]:
                 consec_count += 1
                 drops.append(round(vals[sorted_yrs[i]] - vals[sorted_yrs[i + 1]], 1))
             else:
-                consec_count = 0; drops = []
+                consec_count = 0
+                drops = []
         if consec_count >= 2:
             first_val = vals[sorted_yrs[-(consec_count + 1)]]
             last_val = vals[sorted_yrs[-1]]
@@ -872,18 +914,23 @@ def detect_school_deterioration_full(year_cache, metric, min_count=2):
             data_by_year[yr]["_entity"] = data_by_year[yr]["_entity"].apply(norm_school)
             for _, row in ss.iterrows():
                 name_lookup[norm_school(row["學校"])] = row["學校"]
-    if not data_by_year: return [], []
+    if not data_by_year:
+        return [], []
 
     yr_list = sorted(data_by_year.keys())
     entity_series = {}
     for yr in yr_list:
         df = data_by_year[yr]
-        if min_count > 0 and "一階人數" in df.columns: df = df[df["一階人數"] >= min_count]
-        if "二→最終" in metric and "二階人數" in df.columns: df = df[df["二階人數"] > 0]
+        if min_count > 0 and "一階人數" in df.columns:
+            df = df[df["一階人數"] >= min_count]
+        if "二→最終" in metric and "二階人數" in df.columns:
+            df = df[df["二階人數"] > 0]
         for _, row in df.iterrows():
             ent = row["_entity"]
-            if ent not in entity_series: entity_series[ent] = {}
-            if metric in row.index: entity_series[ent][yr] = row[metric]
+            if ent not in entity_series:
+                entity_series[ent] = {}
+            if metric in row.index:
+                entity_series[ent][yr] = row[metric]
 
     pair_results = []
     for i in range(len(yr_list) - 1):
@@ -902,15 +949,19 @@ def detect_school_deterioration_full(year_cache, metric, min_count=2):
     consecutive_results = []
     for ent, vals in entity_series.items():
         sorted_yrs = [y for y in yr_list if y in vals]
-        if len(sorted_yrs) < 2: continue
-        consec_count = 0; drops = []
+        if len(sorted_yrs) < 2:
+            continue
+        consec_count = 0
+        drops = []
         for i in range(len(sorted_yrs) - 1):
-            vc = vals.get(sorted_yrs[i + 1]); vp = vals.get(sorted_yrs[i])
+            vc = vals.get(sorted_yrs[i + 1])
+            vp = vals.get(sorted_yrs[i])
             if vc is not None and vp is not None and vc < vp:
                 consec_count += 1
                 drops.append(round(vp - vc, 1))
             else:
-                consec_count = 0; drops = []
+                consec_count = 0
+                drops = []
         if consec_count >= 2:
             consecutive_results.append({
                 "學校": name_lookup.get(ent, ent),
@@ -928,10 +979,14 @@ def detect_school_deterioration_full(year_cache, metric, min_count=2):
 # ============================================================
 # Session State
 # ============================================================
-if "years" not in st.session_state: st.session_state["years"] = {}
-if "all_files" not in st.session_state: st.session_state["all_files"] = {}
-if "analysis_ready" not in st.session_state: st.session_state["analysis_ready"] = False
-if "analysis_version" not in st.session_state: st.session_state["analysis_version"] = 0
+if "years" not in st.session_state:
+    st.session_state["years"] = {}
+if "all_files" not in st.session_state:
+    st.session_state["all_files"] = {}
+if "analysis_ready" not in st.session_state:
+    st.session_state["analysis_ready"] = False
+if "analysis_version" not in st.session_state:
+    st.session_state["analysis_version"] = 0
 
 # ============================================================
 # Sidebar
@@ -990,7 +1045,7 @@ with st.sidebar:
             ydata["p3"] = st.selectbox("🟢 最終入學", file_opts, key=f"p3_{yr}",
                 index=file_opts.index(ydata["p3"]) if ydata["p3"] in file_opts else 0)
 
-            # === v6.8 學生ID欄位偵測 ===
+            # === v6.9 學生ID欄位偵測 ===
             for phase_key, phase_label in [("p1", "一階"), ("p2", "二階"), ("p3", "最終")]:
                 fname = ydata.get(phase_key)
                 if fname and fname != "-- 未選擇 --" and fname in st.session_state["all_files"]:
@@ -1039,7 +1094,7 @@ with st.sidebar:
                 elif cc3:
                     st.markdown(
                         f'<div class="mapping-box">📋 偵測到班級欄位：「{cc3}」<br>'
-                        f'v6.8 解析：[學制][科系縮寫→展開][年級][班別]</div>',
+                        f'v6.9 解析：[學制][科系縮寫→展開][年級][班別]</div>',
                         unsafe_allow_html=True)
                     sample = p3df[cc3].value_counts().head(8)
                     for cn, cnt in sample.items():
@@ -1115,7 +1170,8 @@ def get_year_dfs(yr):
         geo = build_geo_from_p1(p1)
     if s2 and s2 != "-- 未選擇 --" and s2 in st.session_state["all_files"]:
         p2 = st.session_state["all_files"][s2].copy()
-        if geo is not None: p2 = enrich_geo(p2, geo)
+        if geo is not None:
+            p2 = enrich_geo(p2, geo)
     if s3 and s3 != "-- 未選擇 --" and s3 in st.session_state["all_files"]:
         p3 = st.session_state["all_files"][s3].copy()
         ch_col = ydata.get("channel_col")
@@ -1124,7 +1180,8 @@ def get_year_dfs(yr):
             p3[ch_col] = p3[ch_col].fillna("(空白)").astype(str).str.strip()
             p3.loc[p3[ch_col] == "", ch_col] = "(空白)"
             p3 = p3[p3[ch_col].isin(sel_chs)]
-        if geo is not None: p3 = enrich_geo(p3, geo)
+        if geo is not None:
+            p3 = enrich_geo(p3, geo)
         dc3 = detect_dept_col(p3)
         if dc3 is None:
             cc3 = detect_class_col(p3) or ydata.get("class_col_override")
@@ -1132,7 +1189,8 @@ def get_year_dfs(yr):
                 p1_depts = None
                 if p1 is not None:
                     dc1 = detect_dept_col(p1)
-                    if dc1: p1_depts = p1[dc1].dropna().unique().tolist()
+                    if dc1:
+                        p1_depts = p1[dc1].dropna().unique().tolist()
                 p3, mapping, match_detail = auto_map_class_to_dept(p3, cc3, p1_depts)
                 p3["科系"] = p3["_mapped_dept"]
                 p3 = p3.drop(columns=["_mapped_dept"], errors="ignore")
@@ -1169,7 +1227,7 @@ if not valid_years:
 
 
 # ============================================================
-# v6.8 人數分析模組
+# v6.9 人數分析模組
 # ============================================================
 def render_headcount_analysis(yr, p1, p2, p3, id_cols):
     """各階段人數 vs 志願次數分析"""
@@ -1340,26 +1398,31 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
                             fig2.update_layout(height=max(380, len(valid_dup) * 28))
                             st.plotly_chart(fig2, use_container_width=True)
 
-            # 全階段對照
+            # ★ 修復：全階段對照 — 使用一致的欄位名稱
             if all(c in hc_dept.columns for c in ["一階人數", "最終人數"]):
                 valid_all = hc_dept[(hc_dept["一階人數"].notna()) & (hc_dept["一階人數"] > 0)].copy()
                 if not valid_all.empty and valid_all["最終人數"].sum() > 0:
                     st.markdown("---")
                     st.markdown("#### 🎯 人數三段轉換率（去重後）")
+
+                    # ★ 修復：欄位名稱統一為「人數一→最終(%)」等
                     valid_all["人數一→最終(%)"] = np.where(
                         valid_all["一階人數"] > 0,
                         (valid_all["最終人數"] / valid_all["一階人數"] * 100).round(1), 0)
+
+                    display_cols = ["科系", "一階人數"]
                     if "二階人數" in valid_all.columns:
                         valid_all["人數一→二(%)"] = np.where(
                             valid_all["一階人數"] > 0,
                             (valid_all["二階人數"] / valid_all["一階人數"] * 100).round(1), 0)
-                        valid_all["人二→最終(%)"] = np.where(
+                        valid_all["人數二→最終(%)"] = np.where(
                             valid_all["二階人數"] > 0,
                             (valid_all["最終人數"] / valid_all["二階人數"] * 100).round(1), 0)
-                    display_cols = ["科系", "一階人數"]
-                    if "二階人數" in valid_all.columns:
                         display_cols.extend(["二階人數", "人數一→二(%)", "人數二→最終(%)"])
+
                     display_cols.extend(["最終人數", "人數一→最終(%)"])
+                    # 只顯示確實存在的欄位
+                    display_cols = [c for c in display_cols if c in valid_all.columns]
                     st.dataframe(valid_all[display_cols].sort_values("人數一→最終(%)", ascending=False),
                                  use_container_width=True, hide_index=True)
     else:
@@ -1414,6 +1477,7 @@ def render_headcount_analysis(yr, p1, p2, p3, id_cols):
 def show_field_diagnosis(p1, p2, p3, yr_label, id_cols=None):
     with st.expander(f"🔍 {yr_label} 欄位偵測與映射診斷", expanded=False):
         diag = []
+        phase_map = {"一階": "p1", "二階": "p2", "最終": "p3"}
         for phase, df, label in [("一階", p1, "P1"), ("二階", p2, "P2"), ("最終", p3, "P3")]:
             if df is None:
                 diag.append({"階段": phase, "科系欄位": "—", "班級欄位": "—",
@@ -1422,7 +1486,7 @@ def show_field_diagnosis(p1, p2, p3, yr_label, id_cols=None):
             dc = detect_dept_col(df)
             cc = detect_class_col(df)
             sc = detect_school_col(df)
-            id_c = id_cols.get({"一階": "p1", "二階": "p2", "最終": "p3"}.get(phase)) if id_cols else None
+            id_c = id_cols.get(phase_map.get(phase)) if id_cols else None
             diag.append({
                 "階段": phase,
                 "科系欄位": dc if dc else ("科系(映射)" if "科系" in df.columns else "❌"),
@@ -1460,8 +1524,8 @@ def render_year_analysis(yr):
     n2 = len(p2) if p2 is not None else None
     n3 = len(p3) if p3 is not None else None
 
-    # ─── v6.8 人數分析 ───
-    if "人數" in mod:
+    # ─── v6.9 人數分析 ───
+    if "人數分析" in mod:
         render_headcount_analysis(yr, p1, p2, p3, id_cols)
         return
 
@@ -1536,7 +1600,9 @@ def render_year_analysis(yr):
         show_field_diagnosis(p1, p2, p3, yr, id_cols)
 
         if n2 and n3:
-            loss_12 = n1 - n2; loss_23 = n2 - n3; loss_total = n1 - n3
+            loss_12 = n1 - n2
+            loss_23 = n2 - n3
+            loss_total = n1 - n3
             st.markdown(
                 f'<div class="info-box">'
                 f'📊 <b>三段流失分析（列數）</b><br>'
@@ -1544,8 +1610,10 @@ def render_year_analysis(yr):
                 f'</div>', unsafe_allow_html=True)
 
         if p3 is not None and ch_col and ch_col in p3.columns:
-            st.markdown("---"); st.subheader("🟢 最終入學管道分布")
-            cd = p3[ch_col].value_counts().reset_index(); cd.columns = ["入學管道", "人數"]
+            st.markdown("---")
+            st.subheader("🟢 最終入學管道分布")
+            cd = p3[ch_col].value_counts().reset_index()
+            cd.columns = ["入學管道", "人數"]
             cd["佔比(%)"] = (cd["人數"] / cd["人數"].sum() * 100).round(1)
             c1, c2 = st.columns(2)
             with c1:
@@ -1554,19 +1622,24 @@ def render_year_analysis(yr):
             with c2:
                 fig = px.bar(cd.sort_values("人數", ascending=True), x="人數", y="入學管道", orientation="h",
                              text="人數", title="各管道人數", color="佔比(%)", color_continuous_scale="Viridis")
-                fig.update_layout(height=max(400, len(cd)*28))
+                fig.update_layout(height=max(400, len(cd) * 28))
                 st.plotly_chart(fig, use_container_width=True)
 
         fl, fv = ["一階報名"], [n1]
-        if n2: fl.append("二階報到"); fv.append(n2)
-        if n3: fl.append("最終入學"); fv.append(n3)
+        if n2:
+            fl.append("二階報到")
+            fv.append(n2)
+        if n3:
+            fl.append("最終入學")
+            fv.append(n3)
         if len(fv) > 1:
             st.plotly_chart(fig_funnel(fl, fv, f"{yr} 招生漏斗（列數）"), use_container_width=True)
 
         result = build_dept_stats(p1, p2, p3)
         if result and result[0] is not None:
             ds, p3_info = result
-            st.markdown("---"); st.subheader("各科系三階段概覽（列數統計）")
+            st.markdown("---")
+            st.subheader("各科系三階段概覽（列數統計）")
             total_final_table = ds["最終入學"].sum()
             if n3 and total_final_table != n3:
                 diff = n3 - total_final_table
@@ -1575,7 +1648,8 @@ def render_year_analysis(yr):
                 st.markdown(f'<div class="success-box">✅ 科系加總（{total_final_table}）= 總列數（{n3}）完全吻合！</div>', unsafe_allow_html=True)
             st.dataframe(ds.sort_values("一階人數", ascending=False), use_container_width=True, hide_index=True)
             rate_fig = fig_three_rates_bar(ds, "科系", f"{yr} 各科系三段轉換率（列數）")
-            if rate_fig: st.plotly_chart(rate_fig, use_container_width=True)
+            if rate_fig:
+                st.plotly_chart(rate_fig, use_container_width=True)
 
     # ─── 2. 漏斗 ───
     elif "漏斗" in mod:
@@ -1585,9 +1659,11 @@ def render_year_analysis(yr):
             ds, _ = result
             st.dataframe(ds.sort_values("一→最終(%)", ascending=False), use_container_width=True, hide_index=True)
             rate_fig = fig_three_rates_bar(ds, "科系", "各科系三段轉換率比較")
-            if rate_fig: st.plotly_chart(rate_fig, use_container_width=True)
+            if rate_fig:
+                st.plotly_chart(rate_fig, use_container_width=True)
             if "二→最終(%)" in ds.columns and ds["二→最終(%)"].sum() > 0:
-                st.markdown("---"); st.subheader("🟣 二→最終 轉換率分析")
+                st.markdown("---")
+                st.subheader("🟣 二→最終 轉換率分析")
                 ds_p2 = ds[ds["二階人數"] > 0].copy()
                 if not ds_p2.empty:
                     c1, c2 = st.columns(2)
@@ -1596,16 +1672,17 @@ def render_year_analysis(yr):
                                      x="二→最終(%)", y="科系", orientation="h", text="二→最終(%)",
                                      title="二→最終 轉換率排行", color="二→最終(%)", color_continuous_scale="RdYlGn")
                         fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-                        fig.update_layout(height=max(380, len(ds_p2)*28))
+                        fig.update_layout(height=max(380, len(ds_p2) * 28))
                         st.plotly_chart(fig, use_container_width=True)
                     with c2:
                         fig = px.bar(ds_p2.sort_values("二階流失", ascending=False),
                                      x="二階流失", y="科系", orientation="h", text="二階流失",
                                      title="二階報到後流失人數", color="二階流失", color_continuous_scale="OrRd")
                         fig.update_traces(textposition="outside")
-                        fig.update_layout(height=max(380, len(ds_p2)*28))
+                        fig.update_layout(height=max(380, len(ds_p2) * 28))
                         st.plotly_chart(fig, use_container_width=True)
-            st.markdown("---"); st.subheader("單科系漏斗")
+            st.markdown("---")
+            st.subheader("單科系漏斗")
             sel = st.selectbox("選擇科系：", ds["科系"].tolist(), key=f"fun_dept_{yr}")
             row = ds[ds["科系"] == sel].iloc[0]
             c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -1616,13 +1693,18 @@ def render_year_analysis(yr):
             c5.metric("二→最終", f'{row["二→最終(%)"]:.1f}%')
             c6.metric("一→最終", f'{row["一→最終(%)"]:.1f}%')
             fl, fv = ["一階"], [int(row["一階人數"])]
-            if row["二階人數"] > 0 or p2 is not None: fl.append("二階"); fv.append(int(row["二階人數"]))
-            if row["最終入學"] > 0 or p3 is not None: fl.append("最終"); fv.append(int(row["最終入學"]))
+            if row["二階人數"] > 0 or p2 is not None:
+                fl.append("二階")
+                fv.append(int(row["二階人數"]))
+            if row["最終入學"] > 0 or p3 is not None:
+                fl.append("最終")
+                fv.append(int(row["最終入學"]))
             st.plotly_chart(fig_funnel(fl, fv, f"{sel} 漏斗"), use_container_width=True)
 
         ss = build_school_stats(p1, p2, p3)
         if ss is not None:
-            st.markdown("---"); st.subheader("各來源學校漏斗")
+            st.markdown("---")
+            st.subheader("各來源學校漏斗")
             mn = st.slider("一階≥", 1, 50, 5, key=f"fun_mn_{yr}")
             sf = ss[ss["一階人數"] >= mn].sort_values("一→最終(%)", ascending=False)
             st.dataframe(sf, use_container_width=True, hide_index=True)
@@ -1631,8 +1713,10 @@ def render_year_analysis(yr):
     elif "管道" in mod:
         st.subheader(f"📈 {yr} — 入學管道分析")
         if p3 is None or not ch_col or ch_col not in (p3.columns if p3 is not None else []):
-            st.warning("⚠️ 需要最終入學資料及入學方式欄位。"); return
-        cd = p3[ch_col].value_counts().reset_index(); cd.columns = ["入學管道", "人數"]
+            st.warning("⚠️ 需要最終入學資料及入學方式欄位。")
+            return
+        cd = p3[ch_col].value_counts().reset_index()
+        cd.columns = ["入學管道", "人數"]
         cd["佔比(%)"] = (cd["人數"] / cd["人數"].sum() * 100).round(1)
         c1, c2 = st.columns(2)
         with c1:
@@ -1641,11 +1725,12 @@ def render_year_analysis(yr):
         with c2:
             fig = px.bar(cd.sort_values("人數", ascending=True), x="人數", y="入學管道", orientation="h",
                          text="人數", title="人數排行", color="佔比(%)", color_continuous_scale="Viridis")
-            fig.update_layout(height=max(400, len(cd)*30))
+            fig.update_layout(height=max(400, len(cd) * 30))
             st.plotly_chart(fig, use_container_width=True)
         dept_col = detect_dept_col(p3) or ("科系" if "科系" in p3.columns else None)
         if dept_col:
-            st.markdown("---"); st.subheader("管道 × 科系")
+            st.markdown("---")
+            st.subheader("管道 × 科系")
             valid_p3 = p3[p3[dept_col].notna()] if dept_col == "科系" else p3
             cross = valid_p3.groupby([ch_col, dept_col]).size().reset_index(name="人數")
             fig = px.bar(cross, x=ch_col, y="人數", color=dept_col, barmode="stack",
@@ -1656,26 +1741,40 @@ def render_year_analysis(yr):
     # ─── 4. 地理 ───
     elif "地理" in mod:
         st.subheader(f"🗺️ {yr} — 地理分布")
-        if geo is None: st.warning("⚠️ 一階資料無經緯度欄位。"); return
+        if geo is None:
+            st.warning("⚠️ 一階資料無經緯度欄位。")
+            return
+
         def do_map(src_df, count_label, title_text):
             sc_ = detect_school_col(src_df)
-            if sc_ is None: return
+            if sc_ is None:
+                return
             agg = src_df.groupby(sc_).size().reset_index(name=count_label)
             agg["_std"] = agg[sc_].apply(norm_school)
             agg = agg.merge(geo, on="_std", how="left").drop(columns=["_std"])
             fig = fig_map(agg, count_label, title_text)
-            if fig: st.plotly_chart(fig, use_container_width=True)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+
         do_map(p1, "報名人數", f"{yr} 一階報名來源")
-        if p2 is not None: st.markdown("---"); do_map(p2, "報到人數", f"{yr} 二階報到來源")
-        if p3 is not None: st.markdown("---"); do_map(p3, "入學人數", f"{yr} 最終入學來源")
+        if p2 is not None:
+            st.markdown("---")
+            do_map(p2, "報到人數", f"{yr} 二階報到來源")
+        if p3 is not None:
+            st.markdown("---")
+            do_map(p3, "入學人數", f"{yr} 最終入學來源")
 
     # ─── 5. 熱力圖 ───
     elif "熱力圖" in mod:
         st.subheader(f"🏫 {yr} — 科系×學校 熱力圖")
-        dc = detect_dept_col(p1); sc = detect_school_col(p1)
-        if not dc or not sc: st.warning("⚠️ 未偵測到科系或學校欄位。"); return
+        dc = detect_dept_col(p1)
+        sc = detect_school_col(p1)
+        if not dc or not sc:
+            st.warning("⚠️ 未偵測到科系或學校欄位。")
+            return
         mn = st.slider("學校報名≥", 1, 30, 3, key=f"hm_{yr}")
-        valid = p1[sc].value_counts(); valid = valid[valid >= mn].index
+        valid = p1[sc].value_counts()
+        valid = valid[valid >= mn].index
         filt = p1[p1[sc].isin(valid)]
         cr = filt.groupby([sc, dc]).size().reset_index(name="人數")
         st.plotly_chart(fig_heatmap(cr, dc, sc, "人數", f"一階報名（≥{mn}人）"), use_container_width=True)
@@ -1684,11 +1783,18 @@ def render_year_analysis(yr):
     elif "來源學校" in mod:
         st.subheader(f"🎯 {yr} — 來源學校追蹤")
         ss = build_school_stats(p1, p2, p3)
-        if ss is None: st.warning("⚠️ 未偵測到學校欄位。"); return
+        if ss is None:
+            st.warning("⚠️ 未偵測到學校欄位。")
+            return
+
         def tier(n):
-            if n >= 30: return "Tier1(≥30)"
-            elif n >= 10: return "Tier2(10-29)"
-            else: return "Tier3(<10)"
+            if n >= 30:
+                return "Tier1(≥30)"
+            elif n >= 10:
+                return "Tier2(10-29)"
+            else:
+                return "Tier3(<10)"
+
         ss["分級"] = ss["一階人數"].apply(tier)
         sel_t = st.multiselect("篩選分級：", ["Tier1(≥30)", "Tier2(10-29)", "Tier3(<10)"],
                                 default=["Tier1(≥30)", "Tier2(10-29)"], key=f"tier_{yr}")
@@ -1706,25 +1812,35 @@ def render_year_analysis(yr):
             c5.metric("二→最終", f'{r["二→最終(%)"]:.1f}%')
             c6.metric("一→最終", f'{r["一→最終(%)"]:.1f}%')
             fl, fv = ["一階"], [int(r["一階人數"])]
-            if r["二階人數"] > 0 or p2 is not None: fl.append("二階"); fv.append(int(r["二階人數"]))
-            if r["最終入學"] > 0 or p3 is not None: fl.append("最終"); fv.append(int(r["最終入學"]))
-            if len(fv) > 1: st.plotly_chart(fig_funnel(fl, fv, f"{sel} 漏斗"), use_container_width=True)
+            if r["二階人數"] > 0 or p2 is not None:
+                fl.append("二階")
+                fv.append(int(r["二階人數"]))
+            if r["最終入學"] > 0 or p3 is not None:
+                fl.append("最終")
+                fv.append(int(r["最終入學"]))
+            if len(fv) > 1:
+                st.plotly_chart(fig_funnel(fl, fv, f"{sel} 漏斗"), use_container_width=True)
 
     # ─── 7. 流失預警 ───
     elif "流失" in mod:
         st.subheader(f"⚠️ {yr} — 流失預警分析")
-        if p2 is None and p3 is None: st.warning("⚠️ 需要至少二階或最終入學資料。"); return
+        if p2 is None and p3 is None:
+            st.warning("⚠️ 需要至少二階或最終入學資料。")
+            return
         ss = build_school_stats(p1, p2, p3)
-        if ss is None: st.warning("⚠️ 未偵測到學校欄位。"); return
+        if ss is None:
+            st.warning("⚠️ 未偵測到學校欄位。")
+            return
 
         if n2 and n3:
             st.markdown("#### 全校三段流失概覽")
             loss_data = {
                 "階段": ["一→二階", "二→最終", "一→最終（總計）"],
-                "起始人數": [n1, n2, n1], "終點人數": [n2, n3, n3],
-                "流失人數": [n1-n2, n2-n3, n1-n3],
-                "轉換率(%)": [round(n2/n1*100,1), round(n3/n2*100,1), round(n3/n1*100,1)],
-                "流失率(%)": [round((n1-n2)/n1*100,1), round((n2-n3)/n2*100,1), round((n1-n3)/n1*100,1)]
+                "起始人數": [n1, n2, n1],
+                "終點人數": [n2, n3, n3],
+                "流失人數": [n1 - n2, n2 - n3, n1 - n3],
+                "轉換率(%)": [round(n2 / n1 * 100, 1), round(n3 / n2 * 100, 1), round(n3 / n1 * 100, 1)],
+                "流失率(%)": [round((n1 - n2) / n1 * 100, 1), round((n2 - n3) / n2 * 100, 1), round((n1 - n3) / n1 * 100, 1)]
             }
             st.dataframe(pd.DataFrame(loss_data), use_container_width=True, hide_index=True)
 
@@ -1732,8 +1848,11 @@ def render_year_analysis(yr):
                                horizontal=True, key=f"loss_rate_{yr}")
         mn = st.slider("一階≥", 1, 50, 10, key=f"loss_mn_{yr}")
         pool = ss[ss["一階人數"] >= mn].copy()
-        if rate_select == "二→最終(%)": pool = pool[pool["二階人數"] > 0]; loss_col = "二階流失"
-        else: loss_col = "流失人數"
+        if rate_select == "二→最終(%)":
+            pool = pool[pool["二階人數"] > 0]
+            loss_col = "二階流失"
+        else:
+            loss_col = "流失人數"
         avg = pool[rate_select].mean()
         warn = pool[pool[rate_select] < avg].sort_values(loss_col, ascending=False)
         if warn.empty:
@@ -1742,7 +1861,8 @@ def render_year_analysis(yr):
             st.markdown(f'<div class="warning-box">⚠️ {len(warn)} 所學校的 {rate_select} 低於平均 {avg:.1f}%</div>', unsafe_allow_html=True)
             st.dataframe(warn, use_container_width=True, hide_index=True)
 
-        st.markdown("---"); st.subheader("科系流失（三段）")
+        st.markdown("---")
+        st.subheader("科系流失（三段）")
         result = build_dept_stats(p1, p2, p3)
         if result and result[0] is not None:
             ds, _ = result
@@ -1754,7 +1874,9 @@ def render_year_analysis(yr):
 # ============================================================
 def render_cross_year():
     st.header("📊 跨年度比較分析")
-    if len(valid_years) < 2: st.warning("⚠️ 需要至少 2 個年度。"); return
+    if len(valid_years) < 2:
+        st.warning("⚠️ 需要至少 2 個年度。")
+        return
 
     mod_opts = ["📊 總覽儀表板", "👤 人數趨勢", "🔄 招生漏斗", "📈 入學管道",
                 "🗺️ 地理分布", "🏫 科系熱力圖", "🎯 來源學校", "⚠️ 流失預警"]
@@ -1764,8 +1886,11 @@ def render_cross_year():
     year_cache = {}
     for yr in valid_years:
         p1, p2, p3, geo, ch_col, id_cols = get_year_dfs(yr)
-        if p1 is None: continue
-        n1 = len(p1); n2 = len(p2) if p2 is not None else 0; n3 = len(p3) if p3 is not None else 0
+        if p1 is None:
+            continue
+        n1 = len(p1)
+        n2 = len(p2) if p2 is not None else 0
+        n3 = len(p3) if p3 is not None else 0
         result = build_dept_stats(p1, p2, p3)
         ds = result[0] if result and result[0] is not None else None
         ss = build_school_stats(p1, p2, p3)
@@ -1779,11 +1904,13 @@ def render_cross_year():
             "n1": n1, "n2": n2, "n3": n3, "ds": ds, "ss": ss, "hc": hc_info
         }
 
-    if not year_cache: st.warning("⚠️ 沒有有效的年度資料。"); return
+    if not year_cache:
+        st.warning("⚠️ 沒有有效的年度資料。")
+        return
     yr_list = list(year_cache.keys())
 
-    # ═══ 跨年度 ：總覽 ═══
-    if "總覽" in mod and "人數" not in mod:
+    # ═══ 跨年度：總覽 ═══
+    if "總覽" in mod:
         st.subheader("📊 跨年度總覽比較")
         summaries = []
         for yr, c in year_cache.items():
@@ -1831,10 +1958,12 @@ def render_cross_year():
                            "二→最終(%)": s["二→最終(%)(列)"],
                            "一→最終(%)": s["一→最終(%)(列)"]} for s in summaries]),
             "全校三段轉換率趨勢（列數）")
-        if rate_fig: st.plotly_chart(rate_fig, use_container_width=True)
+        if rate_fig:
+            st.plotly_chart(rate_fig, use_container_width=True)
 
     # ═══ 跨年度：人數趨勢 ═══
-    elif "人數" in mod:
+    # ★ 修復：使用「人數趨勢」匹配，而非「人頭」
+    elif "人數趨勢" in mod:
         st.subheader("👤 跨年度人數趨勢分析")
         st.markdown(
             '<div class="dedup-box">'
@@ -1872,7 +2001,8 @@ def render_cross_year():
         # 重複率趨勢
         has_dup = any(r.get("一階重複率(%)") is not None for r in hc_rows)
         if has_dup:
-            st.markdown("---"); st.markdown("#### 📊 各階段重複率趨勢")
+            st.markdown("---")
+            st.markdown("#### 📊 各階段重複率趨勢")
             fig = go.Figure()
             for label, color in [("一階重複率(%)", "#2196F3"), ("二階重複率(%)", "#FF9800"), ("最終重複率(%)", "#4CAF50")]:
                 vals = hcdf[label].tolist() if label in hcdf.columns else []
@@ -1886,7 +2016,8 @@ def render_cross_year():
             st.plotly_chart(fig, use_container_width=True)
 
         # 人數轉換率
-        st.markdown("---"); st.markdown("#### 🎯 人數轉換率 vs 列數轉換率（跨年度）")
+        st.markdown("---")
+        st.markdown("#### 🎯 人數轉換率 vs 列數轉換率（跨年度）")
         compare_rows = []
         for yr, c in year_cache.items():
             hc = c.get("hc", {})
@@ -1906,7 +2037,7 @@ def render_cross_year():
         hv = cdf["人數一→最終(%)"].tolist()
         if any(v is not None for v in hv):
             fig.add_trace(go.Bar(x=cdf["年度"], y=hv, name="人數轉換率", marker_color="#4CAF50"))
-        fig.update_layout(barmode="group", title="一→最終 轉換率比較（列數 vs 人數數）", height=400)
+        fig.update_layout(barmode="group", title="一→最終 轉換率比較（列數 vs 人數）", height=400)
         st.plotly_chart(fig, use_container_width=True)
 
     # ═══ 跨年度：漏斗 ═══
@@ -1918,16 +2049,22 @@ def render_cross_year():
                             specs=[[{"type": "funnel"}] * n_cols])
         for i, (yr, c) in enumerate(year_cache.items()):
             fl, fv = ["一階"], [c["n1"]]
-            if c["n2"]: fl.append("二階"); fv.append(c["n2"])
-            if c["n3"]: fl.append("最終"); fv.append(c["n3"])
-            fig.add_trace(go.Funnel(y=fl, x=fv, name=yr, textinfo="value+percent initial"), row=1, col=i+1)
+            if c["n2"]:
+                fl.append("二階")
+                fv.append(c["n2"])
+            if c["n3"]:
+                fl.append("最終")
+                fv.append(c["n3"])
+            fig.add_trace(go.Funnel(y=fl, x=fv, name=yr, textinfo="value+percent initial"), row=1, col=i + 1)
         fig.update_layout(height=450, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("---"); st.markdown("#### 各科系轉換率跨年度比較")
+        st.markdown("---")
+        st.markdown("#### 各科系轉換率跨年度比較")
         all_depts = set()
         for c in year_cache.values():
-            if c["ds"] is not None: all_depts.update(c["ds"]["科系"].tolist())
+            if c["ds"] is not None:
+                all_depts.update(c["ds"]["科系"].tolist())
         if all_depts:
             rate_metric = st.radio("轉換率指標：", ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
                                    horizontal=True, key="cross_fun_rate")
@@ -1951,9 +2088,12 @@ def render_cross_year():
         for yr, c in year_cache.items():
             if c["p3"] is not None and c["ch_col"] and c["ch_col"] in c["p3"].columns:
                 cd = c["p3"][c["ch_col"]].value_counts().reset_index()
-                cd.columns = ["入學管道", "人數"]; cd["年度"] = yr
+                cd.columns = ["入學管道", "人數"]
+                cd["年度"] = yr
                 ch_data_all.append(cd)
-        if not ch_data_all: st.warning("⚠️ 沒有管道資料。"); return
+        if not ch_data_all:
+            st.warning("⚠️ 沒有管道資料。")
+            return
         all_ch = pd.concat(ch_data_all, ignore_index=True)
         fig = px.bar(all_ch, x="入學管道", y="人數", color="年度", barmode="group",
                      text="人數", title="各管道人數（跨年度）")
@@ -1965,18 +2105,23 @@ def render_cross_year():
         st.subheader("🗺️ 跨年度地理分布比較")
         phase_select = st.radio("選擇階段：", ["一階報名", "最終入學"], horizontal=True, key="cross_geo_phase")
         for yr, c in year_cache.items():
-            if c["geo"] is None: continue
+            if c["geo"] is None:
+                continue
             st.markdown(f"### {yr}")
             src = c["p1"] if "一階" in phase_select else c["p3"]
             label = "報名人數" if "一階" in phase_select else "入學人數"
-            if src is None: st.info(f"{yr}：無此階段資料"); continue
+            if src is None:
+                st.info(f"{yr}：無此階段資料")
+                continue
             sc = detect_school_col(src)
-            if sc is None: continue
+            if sc is None:
+                continue
             agg = src.groupby(sc).size().reset_index(name=label)
             agg["_std"] = agg[sc].apply(norm_school)
             agg = agg.merge(c["geo"], on="_std", how="left").drop(columns=["_std"])
             fig = fig_map(agg, label, f"{yr} {phase_select}")
-            if fig: st.plotly_chart(fig, use_container_width=True)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
 
     # ═══ 跨年度：熱力圖 ═══
     elif "熱力圖" in mod:
@@ -2005,7 +2150,8 @@ def render_cross_year():
         st.subheader("🎯 跨年度來源學校追蹤")
         all_sch_names = set()
         for c in year_cache.values():
-            if c["ss"] is not None: all_sch_names.update(c["ss"]["學校"].tolist())
+            if c["ss"] is not None:
+                all_sch_names.update(c["ss"]["學校"].tolist())
         if all_sch_names:
             sel_sch = st.selectbox("選擇學校：", sorted(all_sch_names), key="cross_sch_sel")
             sch_rows = []
@@ -2023,9 +2169,10 @@ def render_cross_year():
                 rdf = pd.DataFrame(sch_rows)
                 st.dataframe(rdf, use_container_width=True, hide_index=True)
                 rate_fig = fig_three_rates_trend(rdf, f"「{sel_sch}」三段轉換率趨勢")
-                if rate_fig: st.plotly_chart(rate_fig, use_container_width=True)
+                if rate_fig:
+                    st.plotly_chart(rate_fig, use_container_width=True)
 
-    # ═══ 跨年度：流失預警（v6.7 全年度偵測）═══
+    # ═══ 跨年度：流失預警（全年度偵測）═══
     elif "流失" in mod:
         st.subheader("⚠️ 跨年度流失預警分析（全年度偵測）")
         st.markdown("#### 📊 全校三段流失趨勢")
@@ -2040,20 +2187,23 @@ def render_cross_year():
         lsdf = pd.DataFrame(loss_summary)
         st.dataframe(lsdf, use_container_width=True, hide_index=True)
         rate_fig = fig_three_rates_trend(lsdf, "全校三段轉換率趨勢")
-        if rate_fig: st.plotly_chart(rate_fig, use_container_width=True)
+        if rate_fig:
+            st.plotly_chart(rate_fig, use_container_width=True)
 
-        st.markdown("---"); st.markdown("#### 🚨 科系惡化偵測")
+        st.markdown("---")
+        st.markdown("#### 🚨 科系惡化偵測")
         det_metric = st.radio("偵測指標：", ["一→二階(%)", "二→最終(%)", "一→最終(%)"],
                               horizontal=True, key="cross_det_metric")
         dept_data_by_year = {yr: c["ds"] for yr, c in year_cache.items() if c["ds"] is not None}
         if len(dept_data_by_year) >= 2:
             col_a, col_b = st.columns(2)
             yr_opts = list(dept_data_by_year.keys())
-            with col_a: yr_from = st.selectbox("起始年度：", yr_opts, index=0, key="det_yr_from")
+            with col_a:
+                yr_from = st.selectbox("起始年度：", yr_opts, index=0, key="det_yr_from")
             with col_b:
                 yr_to_opts = [y for y in yr_opts if y != yr_from]
                 yr_to = st.selectbox("比較年度：", yr_to_opts,
-                    index=len(yr_to_opts)-1 if yr_to_opts else 0, key="det_yr_to")
+                    index=len(yr_to_opts) - 1 if yr_to_opts else 0, key="det_yr_to")
 
             if yr_from in dept_data_by_year and yr_to in dept_data_by_year:
                 df_from = dept_data_by_year[yr_from]
@@ -2065,8 +2215,10 @@ def render_cross_year():
                 from_map = dict(zip(df_from["科系"].apply(norm_dept), df_from[det_metric]))
                 to_map = dict(zip(df_to["科系"].apply(norm_dept), df_to[det_metric]))
                 dept_name_map = {}
-                for d in df_from["科系"]: dept_name_map[norm_dept(d)] = d
-                for d in df_to["科系"]: dept_name_map[norm_dept(d)] = d
+                for d in df_from["科系"]:
+                    dept_name_map[norm_dept(d)] = d
+                for d in df_to["科系"]:
+                    dept_name_map[norm_dept(d)] = d
                 compare_rows = []
                 for dk in set(from_map) | set(to_map):
                     vf, vt = from_map.get(dk), to_map.get(dk)
@@ -2074,7 +2226,8 @@ def render_cross_year():
                     sev = ""
                     if change is not None and change < 0:
                         sev = "🔴 嚴重" if abs(change) > 10 else ("🟠 注意" if abs(change) > 5 else "🟡 輕微")
-                    elif change is not None and change > 0: sev = "✅ 改善"
+                    elif change is not None and change > 0:
+                        sev = "✅ 改善"
                     compare_rows.append({
                         "科系": dept_name_map.get(dk, dk),
                         f"{yr_from}": vf if vf is not None else "—",
@@ -2083,7 +2236,10 @@ def render_cross_year():
                         "狀態": sev if sev else ("🆕" if vf is None else ("❌ 消失" if vt is None else "—"))
                     })
                 compare_df = pd.DataFrame(compare_rows)
-                def sk(x): return x if isinstance(x, (int, float)) else 999
+
+                def sk(x):
+                    return x if isinstance(x, (int, float)) else 999
+
                 compare_df["_s"] = compare_df["變化"].apply(sk)
                 compare_df = compare_df.sort_values("_s").drop(columns=["_s"])
                 deteriorated = [r for r in compare_rows if isinstance(r["變化"], (int, float)) and r["變化"] < 0]
@@ -2099,19 +2255,22 @@ def render_cross_year():
                 viz = [r for r in compare_rows if isinstance(r["變化"], (int, float))]
                 if viz:
                     vizdf = pd.DataFrame(viz).sort_values("變化")
-                    colors = ["#f44336" if v < -10 else "#FF9800" if v < -5 else "#FFC107" if v < 0 else "#4CAF50" for v in vizdf["變化"]]
-                    fig = go.Figure(go.Bar(x=vizdf["變化"], y=vizdf["科系"], orientation="h", text=vizdf["變化"], marker_color=colors))
+                    colors = ["#f44336" if v < -10 else "#FF9800" if v < -5 else "#FFC107" if v < 0 else "#4CAF50"
+                              for v in vizdf["變化"]]
+                    fig = go.Figure(go.Bar(x=vizdf["變化"], y=vizdf["科系"], orientation="h",
+                                          text=vizdf["變化"], marker_color=colors))
                     fig.update_traces(texttemplate="%{text:+.1f}", textposition="outside")
                     fig.add_vline(x=0, line_color="black", line_width=2)
                     fig.update_layout(title=f"{yr_from}→{yr_to}：{det_metric} 變化",
-                                      height=max(400, len(vizdf)*30))
+                                      height=max(400, len(vizdf) * 30))
                     st.plotly_chart(fig, use_container_width=True)
 
             # 連續下降
             pair_results, consec_results = detect_deterioration_full(
                 dept_data_by_year, det_metric, "科系", min_p2="二→最終" in det_metric)
             if consec_results:
-                st.markdown("---"); st.markdown("##### 🔻 連續下降偵測")
+                st.markdown("---")
+                st.markdown("##### 🔻 連續下降偵測")
                 for r in consec_results:
                     accel = "⚡ 加速惡化" if r["加速中"] else "📉 持續下降"
                     st.markdown(
@@ -2149,6 +2308,6 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 ver = st.session_state.get("analysis_version", 0)
 st.markdown(
     '<div style="text-align:center;color:#aaa;font-size:.85rem;padding:10px;">'
-    '🎓 中華醫事科技大學 招生數據分析系統 v6.8<br>'
+    '🎓 中華醫事科技大學 招生數據分析系統 v6.9<br>'
     '人數 vs 志願次數引擎 ｜ 全年度惡化偵測 ｜ 三段轉換率 ｜ 縮寫展開引擎<br>'
     '分析版本 #' + str(ver) + '</div>', unsafe_allow_html=True)
